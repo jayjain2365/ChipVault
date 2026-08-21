@@ -3,6 +3,12 @@ import json, sys, os, time, re, hashlib
 from datetime import datetime
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "agents"))
+
+# Inject AWS credentials from Streamlit secrets when running on Streamlit Cloud
+if "aws" in st.secrets:
+    os.environ["AWS_ACCESS_KEY_ID"]     = st.secrets["aws"]["access_key_id"]
+    os.environ["AWS_SECRET_ACCESS_KEY"] = st.secrets["aws"]["secret_access_key"]
+    os.environ["AWS_DEFAULT_REGION"]    = st.secrets["aws"].get("region", "us-east-1")
 from agent1_parser import parse_document
 from agent2_compliance import check_compliance
 from agent3_puf_auth import sign_transaction, verify_transaction
