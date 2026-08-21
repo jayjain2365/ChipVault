@@ -285,9 +285,10 @@ def is_already_approved(doc_id: str) -> bool:
     return False
 
 # ── Session state defaults ─────────────────────────────────────────────────────
-if "tx_log"         not in st.session_state: st.session_state["tx_log"]         = []
-if "payment_result" not in st.session_state: st.session_state["payment_result"] = None
-if "auth_fail_count" not in st.session_state: st.session_state["auth_fail_count"] = load_fail_count()
+if "tx_log"              not in st.session_state: st.session_state["tx_log"]              = []
+if "payment_result"      not in st.session_state: st.session_state["payment_result"]      = None
+if "auth_fail_count"     not in st.session_state: st.session_state["auth_fail_count"]     = load_fail_count()
+if "session_approved"    not in st.session_state: st.session_state["session_approved"]    = set()
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -570,7 +571,7 @@ elif "compliance" not in ss:
     st.rerun()
 
 elif ss["compliance"]["status"] == "CLEARED" and ss.get("payment_result") is None:
-    if is_already_approved(swift["doc_id"]):
+    if is_already_approved(swift["doc_id"]) and swift["doc_id"] not in ss.get("session_approved", set()):
         ss["payment_result"] = "APPROVED"
         ss["is_duplicate"]   = True
         st.rerun()
@@ -587,6 +588,7 @@ elif ss["compliance"]["status"] == "CLEARED" and ss.get("payment_result") is Non
                 ss["auth_fail_count"] = ss.get("auth_fail_count", 0) + 1
             else:
                 ss["auth_fail_count"] = 0
+                ss["session_approved"].add(swift["doc_id"])
             save_fail_count(ss["auth_fail_count"])
             log_entry = {
                 "doc_id":    swift["doc_id"],
@@ -695,7 +697,7 @@ if compliance_done:
 
         with ca:
             if st.button("✅  Approve & Sign with PUF", use_container_width=True, type="primary"):
-                if is_already_approved(swift["doc_id"]):
+                if is_already_approved(swift["doc_id"]) and swift["doc_id"] not in ss.get("session_approved", set()):
                     ss["payment_result"] = "APPROVED"
                     ss["is_duplicate"]   = True
                     st.rerun()
@@ -711,6 +713,7 @@ if compliance_done:
                         ss["auth_fail_count"] = ss.get("auth_fail_count", 0) + 1
                     else:
                         ss["auth_fail_count"] = 0
+                        ss["session_approved"].add(swift["doc_id"])
                     save_fail_count(ss["auth_fail_count"])
                     log_entry = {
                         "doc_id":    swift["doc_id"],
