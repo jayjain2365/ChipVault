@@ -359,20 +359,39 @@ elif pr == "REJECTED":
 else:
     s4_cc, s4_sc, s4_t = "pc-pend","ps-pend","PENDING"
 
-a1 = "done" if parsed_done      else ""
-a2 = "done" if compliance_done  else ""
-a3 = "done" if pr in ("APPROVED","BLOCKED","REJECTED") else ""
+a1_col = "#059669" if parsed_done     else "#1e2d42"
+a2_col = "#059669" if compliance_done else "#1e2d42"
+a3_col = "#059669" if pr in ("APPROVED","BLOCKED","REJECTED") else "#1e2d42"
 
-st.html(f"""
-<div class="pipe-wrap">
-    {pipe_step("①","AI Document<br>Parse",    s1_cc, s1_sc, s1_t)}
-    <div class="pipe-arrow {a1}">→</div>
-    {pipe_step("②","IFSCA<br>Compliance",     s2_cc, s2_sc, s2_t)}
-    <div class="pipe-arrow {a2}">→</div>
-    {pipe_step("③","Human<br>Approval",       s3_cc, s3_sc, s3_t)}
-    <div class="pipe-arrow {a3}">→</div>
-    {pipe_step("④","PUF<br>Authentication",   s4_cc, s4_sc, s4_t)}
-</div>""")
+COLORS = {
+    "pend": {"bg":"#1a2035","bd":"#2d3748","fg":"#4a5568","st":"#4a5568"},
+    "ok":   {"bg":"#052e16","bd":"#059669","fg":"#34d399","st":"#10b981"},
+    "warn": {"bg":"#3b1f00","bd":"#d97706","fg":"#fcd34d","st":"#f59e0b"},
+    "fail": {"bg":"#3b0000","bd":"#dc2626","fg":"#f87171","st":"#ef4444"},
+}
+
+def circle(num, label, state, status):
+    c = COLORS[state]
+    return f"""<div style="display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;max-width:160px;">
+  <div style="width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1rem;font-weight:800;border:2px solid {c['bd']};background:{c['bg']};color:{c['fg']};">{num}</div>
+  <div style="font-size:0.7rem;color:#718096;text-align:center;line-height:1.3;">{label}</div>
+  <div style="font-size:0.68rem;font-weight:700;text-align:center;color:{c['st']};">{status}</div>
+</div>"""
+
+def arrow(col):
+    return f"""<div style="color:{col};font-size:1.3rem;padding:0 8px;padding-bottom:18px;flex-shrink:0;">&#8594;</div>"""
+
+pipe_html = f"""<div style="display:flex;align-items:center;justify-content:center;background:#0d1424;border:1px solid #1a2740;border-radius:14px;padding:18px 28px;margin-bottom:18px;">
+{circle("&#9312;","AI Document Parse",  s1_cc[3:], s1_t)}
+{arrow(a1_col)}
+{circle("&#9313;","IFSCA Compliance",   s2_cc[3:], s2_t)}
+{arrow(a2_col)}
+{circle("&#9314;","Human Approval",     s3_cc[3:], s3_t)}
+{arrow(a3_col)}
+{circle("&#9315;","PUF Authentication", s4_cc[3:], s4_t)}
+</div>"""
+
+st.html(pipe_html)
 
 # ── Documents ─────────────────────────────────────────────────────────────────
 col_l, col_r = st.columns(2)
