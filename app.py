@@ -274,21 +274,10 @@ def save_fail_count(n: int) -> None:
     except Exception:
         pass
 
-def is_already_approved(doc_id: str) -> bool:
-    """Check if this doc_id already has an APPROVED entry in the persistent audit log."""
-    try:
-        if os.path.exists(_TX_LOG_PATH):
-            log = json.load(open(_TX_LOG_PATH))
-            return any(e.get("doc_id") == doc_id and e.get("result") == "APPROVED" for e in log)
-    except Exception:
-        pass
-    return False
-
 # ── Session state defaults ─────────────────────────────────────────────────────
-if "tx_log"              not in st.session_state: st.session_state["tx_log"]              = []
-if "payment_result"      not in st.session_state: st.session_state["payment_result"]      = None
-if "auth_fail_count"     not in st.session_state: st.session_state["auth_fail_count"]     = load_fail_count()
-if "session_approved"    not in st.session_state: st.session_state["session_approved"]    = set()
+if "tx_log"          not in st.session_state: st.session_state["tx_log"]          = []
+if "payment_result"  not in st.session_state: st.session_state["payment_result"]  = None
+if "auth_fail_count" not in st.session_state: st.session_state["auth_fail_count"] = load_fail_count()
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -380,7 +369,7 @@ doc_changed  = st.session_state.get("current_doc_id") != current_doc_id
 chip_changed = st.session_state.get("current_chip")   != chip
 
 if doc_changed or chip_changed:
-    for k in ["payment_result", "puf_auth", "tx_string", "pipeline_error", "is_duplicate"]:
+    for k in ["payment_result", "puf_auth", "tx_string", "pipeline_error"]:
         st.session_state.pop(k, None)
     st.session_state["payment_result"] = None
 
@@ -571,10 +560,6 @@ elif "compliance" not in ss:
     st.rerun()
 
 elif ss["compliance"]["status"] == "CLEARED" and ss.get("payment_result") is None:
-    if is_already_approved(swift["doc_id"]) and swift["doc_id"] not in ss.get("session_approved", set()):
-        ss["payment_result"] = "APPROVED"
-        ss["is_duplicate"]   = True
-        st.rerun()
     with st.spinner(f"🔐 Agent 3 — PUF Authentication (Chip {chip})..."):
         time.sleep(1)
         try:
@@ -588,7 +573,6 @@ elif ss["compliance"]["status"] == "CLEARED" and ss.get("payment_result") is Non
                 ss["auth_fail_count"] = ss.get("auth_fail_count", 0) + 1
             else:
                 ss["auth_fail_count"] = 0
-                ss["session_approved"].add(swift["doc_id"])
             save_fail_count(ss["auth_fail_count"])
             log_entry = {
                 "doc_id":    swift["doc_id"],
@@ -697,10 +681,6 @@ if compliance_done:
 
         with ca:
             if st.button("✅  Approve & Sign with PUF", use_container_width=True, type="primary"):
-                if is_already_approved(swift["doc_id"]) and swift["doc_id"] not in ss.get("session_approved", set()):
-                    ss["payment_result"] = "APPROVED"
-                    ss["is_duplicate"]   = True
-                    st.rerun()
                 clean_note = re.sub(r'\|', '', officer_note or 'approved').strip() or 'approved'
                 tx_string = build_tx_string(swift, note=f"OFFICER:{clean_note}")
                 try:
@@ -713,7 +693,6 @@ if compliance_done:
                         ss["auth_fail_count"] = ss.get("auth_fail_count", 0) + 1
                     else:
                         ss["auth_fail_count"] = 0
-                        ss["session_approved"].add(swift["doc_id"])
                     save_fail_count(ss["auth_fail_count"])
                     log_entry = {
                         "doc_id":    swift["doc_id"],
@@ -748,12 +727,7 @@ if compliance_done:
 # ── Final result banners ──────────────────────────────────────────────────────
 pr = ss.get("payment_result")
 
-if pr == "APPROVED" and ss.get("is_duplicate"):
-    st.warning(
-        f"⚠️ Duplicate transaction — {swift['doc_id']} was already approved in a prior session. "
-        "Payment was NOT re-signed. See `transactions_log.json` for the original signed entry."
-    )
-elif pr == "APPROVED" and "puf_auth" in ss:
+if pr == "APPROVED" and "puf_auth" in ss:
     auth = ss["puf_auth"]
     st.html(f"""
     <div class="banner-approved">
