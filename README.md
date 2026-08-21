@@ -1,127 +1,121 @@
-# 🔐 PUF-Pay — Hardware-Rooted Secure Trade Finance
+# PUF-Pay — Hardware-Rooted Secure Trade Finance
 
-**GIFT IFIH Young Builders Program 2026**
+> **"Your silicon is your password."**
 
-> *"Your silicon is your password."*
-
-A secure trade finance platform that combines AI document processing, IFSCA compliance automation, and hardware-rooted payment authentication using Physical Unclonable Functions (PUF).
+GIFT IFIH Young Builders Program 2026 · Track 1: Agentic AI in Financial Services
 
 ---
 
 ## The Problem
 
-GIFT City IBUs process cross-border trade finance (Letters of Credit, Bills of Lading). Current pain points:
+GIFT City International Banking Units (IBUs) process cross-border Letters of Credit worth millions of dollars daily. Today, three pain points slow every transaction:
 
 | Pain Point | Impact |
 |---|---|
-| Manual LC review | 4+ hours per transaction |
-| Compliance errors | Regulatory risk under IFSCA |
-| Software-stored private keys | Vulnerable to theft, malware, SIM swap |
-| No hardware-rooted officer identity | Cannot detect cloned/compromised devices |
+| Manual document review | Officers spend 4+ hours per LC checking dates, goods, ports, and amounts by hand |
+| Compliance errors | Missed IFSCA rule violations create regulatory risk and payment disputes |
+| Software-stored private keys | Officer credentials live in files or databases — one breach exposes every transaction |
+
+The third problem is the most dangerous. If an officer's signing key is stolen, an attacker can authorise fraudulent payments indefinitely. Changing the key requires revoking and re-enrolling across every system.
+
+**PUF-Pay solves all three** with an AI-powered document pipeline and a signing key that physically cannot be stolen — because it doesn't exist until the moment of signing.
 
 ---
 
 ## The Solution
 
-PUF-Pay solves all three with a **3-agent AI pipeline + hardware PUF authentication layer**:
-
 ```
-SWIFT MT700 + Bill of Lading
-          │
-          ▼
-  ① Agent 1 — AI Document Parsing (AWS Bedrock)
-          │
-          ▼
-  ② Agent 2 — IFSCA Compliance Check
-          │
-     ┌────┴────┐
-  REJECTED   CLEARED / FLAGGED
-     │              │
-  BLOCKED      ③ Human Approval
+SWIFT MT700 Letter of Credit + Bill of Lading
                     │
                     ▼
-            ④ PUF Authentication
-               ┌────┴────┐
-            Chip A      Chip B
-           APPROVED    BLOCKED
+   ┌────────────────────────────────────────┐
+   │  Agent 1 — AI Document Parsing        │
+   │  AWS Bedrock / Claude Sonnet           │
+   │  Extracts: parties, amounts, goods,    │
+   │  ports, dates, one-line summary        │
+   └────────────────────┬───────────────────┘
+                        │ structured JSON
+                        ▼
+   ┌────────────────────────────────────────┐
+   │  Agent 2 — IFSCA Compliance Check     │
+   │  4 deterministic rules + AI memo       │
+   │                                        │
+   │  CLEARED ──────────────────────────┐  │
+   │  FLAGGED ──── officer review ──┐   │  │
+   │  REJECTED ── auto-block ──┐    │   │  │
+   └───────────────────────────┼────┼───┼──┘
+                                │    │   │
+                    BLOCKED ◄───┘    │   │
+                                     ▼   ▼
+   ┌────────────────────────────────────────┐
+   │  Human-in-the-Loop (FLAGGED only)     │
+   │  Officer reviews and approves/rejects  │
+   └────────────────────┬───────────────────┘
+                        │ approved
+                        ▼
+   ┌────────────────────────────────────────┐
+   │  Agent 3 — PUF Authentication         │
+   │  Ring Oscillator PUF · ECDSA           │
+   │                                        │
+   │  Chip A (enrolled) → APPROVED ✅      │
+   │  Chip B (clone)    → BLOCKED  🚫      │
+   └────────────────────────────────────────┘
+                        │
+                        ▼
+              Signed Transaction
 ```
 
 ---
 
-## What is a PUF?
+## What Each Agent Does
 
-Every silicon chip has microscopic manufacturing variations — tiny differences in transistor speed, wire capacitance, and doping levels. These are random, permanent, and impossible to replicate, even by the original manufacturer.
+**Agent 1 — AI Document Parser**
+Calls Claude Sonnet on AWS Bedrock with the raw SWIFT MT700 JSON and asks it to extract every key field: applicant, beneficiary, amount, currency, goods description, port of loading, port of discharge, issue date, expiry date, and a one-line human-readable summary. The output is clean structured JSON that downstream agents and the UI can work with directly. This removes the manual data-entry step that currently takes officers 30–60 minutes per document.
 
-A **Physical Unclonable Function (PUF)** measures these variations using **256 Ring Oscillators** to generate a unique **128-bit fingerprint** for every chip.
+**Agent 2 — IFSCA Compliance Checker**
+Runs four deterministic rule checks against the parsed document and its paired Bill of Lading: expiry date before issue date, goods mismatch between LC and BL, amount above the IFSCA reporting threshold (USD 200,000), and port-of-loading mismatch. Any CRITICAL violation auto-rejects the transaction. Threshold flags escalate to human review. After rule evaluation, Agent 2 calls Bedrock again to generate a two-sentence formal compliance memo — the kind an IFSCA examiner would write — explaining the decision in plain language.
 
-```
-Traditional payment auth:          PUF-Pay:
-  Private key stored in memory  →    Key regenerated from silicon
-  Attacker steals key file      →    No key to steal — it doesn't exist
-  Clone chip, copy key          →    Clone has different silicon → different key
-```
-
-**Key properties:**
-- Key is **never stored** — regenerated on demand, discarded after signing
-- Even an identical-model chip produces a **different key** (different silicon)
-- A cloned device fails authentication because its oscillator frequencies differ
+**Agent 3 — PUF Authentication**
+After compliance passes and (if flagged) an officer approves, Agent 3 signs the transaction using a key derived from the officer's hardware chip. The chip uses a Ring Oscillator PUF — 256 tiny oscillating circuits whose frequencies are unique to that chip's silicon — to regenerate a 128-bit key. SHA-256 expands this to a 256-bit ECDSA private key, which signs the transaction string. The bank verifies the signature against the enrolled Chip A public key. A cloned device has different silicon, produces a different key, and its signature fails — the clone is detected and blocked automatically.
 
 ---
 
-## System Architecture
+## What is a PUF? (No hardware jargon)
 
-### Layer 1 — Hardware PUF (Verilog / Vivado)
+Think of a silicon chip like a fingerprint. Even two chips made from identical blueprints on the same factory line come out microscopically different — tiny variations in how fast electrons flow through each transistor. These differences are random, permanent, and impossible to copy.
 
-| Module | File | Function |
+A **Physical Unclonable Function (PUF)** turns those silicon quirks into a key. Instead of storing a private key in memory (where it can be stolen), the chip *generates* the key fresh each time it is needed, from its own physical properties, then discards it immediately after signing.
+
+**What this means for a bank:** Even if an attacker steals the officer's laptop, installs malware, or physically clones the chip, the clone cannot produce the same key. The silicon is different. The signature fails. The payment is blocked.
+
+In PUF-Pay, we simulate this in software using per-chip seed values that mimic manufacturing variation. The cryptographic flow — key derivation, signing, and verification — is identical to what runs on real Xilinx Artix-7 hardware.
+
+---
+
+## Architecture Layers
+
+| Layer | Technology | What it does |
 |---|---|---|
-| Ring Oscillator | `rtl/ring_oscillator.v` | Single odd-stage inverter loop, free-oscillates |
-| Frequency Counter | `rtl/frequency_counter.v` | Counts RO edges in fixed clock window (CDC-safe) |
-| RO PUF Core | `rtl/ro_puf_core.v` | 256 ROs → pairwise comparison → 128-bit response |
-| Fuzzy Extractor | `rtl/fuzzy_extractor.v` | Corrects 1-bit noise per 8-bit block, stabilises key |
-| Anti-Tamper | `rtl/anti_tamper.v` | Detects voltage/temperature attack, zeroizes on breach |
-| Top Integration | `rtl/puf_pay_top.v` | Full system with `CHIP_SEED` parameter for per-chip ID |
+| Hardware PUF | Verilog-2001 · Vivado XSim · Artix-7 | 256 Ring Oscillators → 128-bit unique key |
+| Fuzzy Extractor | RTL module (`rtl/fuzzy_extractor.v`) | Corrects 1-bit noise per byte to stabilise key |
+| Key Expansion | SHA-256 | 128-bit PUF key → 256-bit ECDSA private key |
+| ECDSA Signing | Python `ecdsa` · SECP256k1 | Signs transaction string; bank verifies |
+| Agent 1 | AWS Bedrock · Claude Sonnet | AI document parsing |
+| Agent 2 | AWS Bedrock · Claude Sonnet | IFSCA compliance + AI memo |
+| UI | Streamlit | Dark fintech dashboard, live pipeline status |
 
-The Vivado testbench (`tb/tb_two_chips.v`) runs the RTL simulation for two chips and writes their derived keys to `puf_key_chipA.txt` and `puf_key_chipB.txt`.
+---
 
-### Layer 2 — AI Document Processing (AWS Bedrock)
+## Tech Stack
 
-**Agent 1** (`agents/agent1_parser.py`): Calls Claude Sonnet on AWS Bedrock to parse a SWIFT MT700 Letter of Credit JSON. Extracts: applicant, beneficiary, amount, currency, goods, ports, dates, and a one-line summary. Returns clean structured JSON.
-
-**Agent 2** (`agents/agent2_compliance.py`): Runs 4 deterministic IFSCA compliance rules, then calls Bedrock to generate a formal compliance memo.
-
-### Layer 3 — IFSCA Compliance Rules
-
-| Rule | Trigger | Severity |
-|---|---|---|
-| Expiry before issue date | `expiry_date < issue_date` | CRITICAL → REJECTED |
-| Goods mismatch | LC goods ≠ Bill of Lading goods | CRITICAL → REJECTED |
-| Amount threshold | `amount > USD 200,000` | FLAG → FLAGGED |
-| Port mismatch | LC port ≠ BL port of loading | CRITICAL → REJECTED |
-
-**Decision logic:** Any CRITICAL issue → `REJECTED`. Non-critical only → `FLAGGED`. No issues → `CLEARED`.
-
-### Layer 4 — Human-in-the-Loop
-
-Officer reviews parsed document and compliance result. Can approve or reject. Required before PUF signing. REJECTED transactions (by compliance engine) cannot reach this stage.
-
-### Layer 5 — PUF Authentication (ECDSA)
-
-```
-Chip regenerates 128-bit key from silicon
-        │
-        ▼
-SHA-256 key expansion → 256-bit ECDSA private key (SECP256k1)
-        │
-        ▼
-Signs transaction string
-        │
-        ▼
-Bank verifies: valid sig from enrolled Chip A public key?
-        │
-   ┌────┴────┐
-  Yes        No
-APPROVED   BLOCKED (different silicon = different key = invalid sig)
-```
+| Component | Version |
+|---|---|
+| Python | 3.10+ |
+| streamlit | 1.40+ |
+| boto3 | 1.35+ |
+| ecdsa | 0.19+ |
+| faker | 33+ |
+| AWS Bedrock model | `us.anthropic.claude-sonnet-4-6` (us-east-1) |
 
 ---
 
@@ -130,11 +124,11 @@ APPROVED   BLOCKED (different silicon = different key = invalid sig)
 ```
 ChipVault/
 ├── agents/
-│   ├── agent1_parser.py       # AWS Bedrock document parser
-│   ├── agent2_compliance.py   # IFSCA compliance checker
-│   └── agent3_puf_auth.py     # PUF-based ECDSA signing
+│   ├── agent1_parser.py        # AWS Bedrock document parser
+│   ├── agent2_compliance.py    # IFSCA compliance checker + AI memo
+│   └── agent3_puf_auth.py      # PUF-based ECDSA signing & verification
 │
-├── rtl/                       # Synthesizable Verilog (hardware PUF)
+├── rtl/                        # Synthesisable Verilog (hardware PUF)
 │   ├── ring_oscillator.v
 │   ├── frequency_counter.v
 │   ├── ro_puf_core.v
@@ -142,95 +136,82 @@ ChipVault/
 │   ├── anti_tamper.v
 │   └── puf_pay_top.v
 │
-├── tb/                        # Vivado testbenches
-│   └── tb_two_chips.v         # Generates Chip A + Chip B keys
+├── tb/
+│   └── tb_two_chips.v          # Vivado testbench — generates Chip A + B keys
 │
-├── app.py                     # Streamlit UI (main demo)
-├── generate_data.py           # Synthetic LC + BL generator
-├── synthetic_docs.json        # 10 pre-generated document pairs
-├── puf_key_chipA.txt          # Chip A PUF-derived key (from Vivado)
-├── puf_key_chipB.txt          # Chip B PUF-derived key (from Vivado)
-├── requirements.txt
-└── README.md
+├── app.py                      # Streamlit UI (main demo)
+├── generate_data.py            # Synthetic LC + BL document generator
+├── test_all.py                 # Full pipeline test suite (6 tests)
+├── synthetic_docs.json         # 10 pre-generated document pairs
+├── puf_key_chipA.txt           # Chip A PUF key (from Vivado simulation)
+├── puf_key_chipB.txt           # Chip B PUF key (different silicon)
+└── requirements.txt
 ```
 
 ---
 
 ## Quickstart
 
-### Prerequisites
-- Python 3.10+
-- AWS account with Bedrock access (us-east-1, Claude Sonnet model enabled)
-- AWS credentials configured
-
-### Setup
+**Prerequisites:** Python 3.10+, an AWS account with Bedrock enabled (us-east-1, Claude Sonnet model access required), AWS credentials configured.
 
 ```bash
-git clone <repo>
+git clone https://github.com/jayjain2365/ChipVault.git
 cd ChipVault
 pip install -r requirements.txt
-aws configure          # enter your Access Key, Secret, region: us-east-1
+aws configure          # enter Access Key, Secret Key, region: us-east-1
 streamlit run app.py
 ```
 
 Open **http://localhost:8501**
 
-### Running a Demo
-
-1. Select a transaction from the sidebar (LC-1 through LC-10)
-2. Select Officer Device: **A** (trusted) or **B** (clone attack demo)
-3. Click **Run Agent 1** — parses the LC via Bedrock
-4. Click **Run Agent 2** — checks compliance
-5. If CLEARED or FLAGGED: enter an officer note and click **Approve & Sign**
-6. Watch PUF authentication pass (Chip A) or fail (Chip B)
-
-**Demo cheat sheet:**
-
-| Scenario | Transaction |
-|---|---|
-| Happy path (CLEARED → approved) | LC-1, LC-6, or LC-10 |
-| Flagged for manual review | LC-2, LC-4, LC-7, or LC-9 |
-| Expiry date CRITICAL | LC-3 |
-| Goods mismatch CRITICAL | LC-5 |
-| Port mismatch CRITICAL | LC-8 |
-| Clone attack demo | Any CLEARED doc + select Chip B |
+**To run the test suite:**
+```bash
+python test_all.py
+```
 
 ---
 
-## Honest Disclosure (Modeling Notes)
+## Demo Walkthrough
 
-We believe in being transparent about what is real vs. simulated in this prototype:
+1. Select a transaction from the sidebar (LC-1 through LC-10)
+2. Select Officer Device: **A** (trusted chip) or **B** (clone attack demo)
+3. The pipeline runs automatically — no button clicks needed
+4. Watch the four pipeline stages complete in real time
+
+**Scenarios to demo:**
+
+| Transaction | What to expect |
+|---|---|
+| LC-1, LC-6, LC-10 | CLEARED → PUF signs automatically → APPROVED |
+| LC-2, LC-4, LC-7, LC-9 | FLAGGED → officer must approve → then PUF signs |
+| LC-3 | REJECTED — expiry date before issue date |
+| LC-5 | REJECTED — goods description mismatch |
+| LC-8 | REJECTED — port of loading mismatch |
+| Any CLEARED doc + Chip B | BLOCKED — silicon clone attack detected |
+
+---
+
+## Honest Disclosure
+
+We believe transparency matters more than hype. Here is exactly what is simulated vs. real in this prototype:
 
 | Claim | Reality |
 |---|---|
-| Ring Oscillator PUF | ✅ Fully implemented in Verilog, verified in Vivado XSim |
-| 256 ROs → 128-bit response | ✅ Implemented and tested |
-| Fuzzy extractor (noise correction) | ✅ Simplified 1-bit-per-block correction — functional prototype |
-| Anti-tamper monitor | ✅ Implemented for voltage, temperature, brute-force scenarios |
-| Physical silicon entropy | ⚠️ Simulated via `CHIP_SEED` parameter — real silicon entropy comes from manufacturing variation, which cannot be modelled in RTL simulation |
-| Hardware ↔ software bridge | ⚠️ Key written to a `.txt` file by Vivado testbench, read by Python — in production this would be a secure hardware bus |
-| SWIFT documents | ⚠️ Synthetic data generated with Faker — not real banking documents |
-| IFSCA compliance rules | ⚠️ 4 simplified rules — real IFSCA compliance is significantly more complex |
-
----
-
-## Tech Stack
-
-| Component | Technology |
-|---|---|
-| Hardware PUF | Verilog-2001, Xilinx Vivado 2025.1, Artix-7 |
-| AI parsing | AWS Bedrock, Claude Sonnet (`us.anthropic.claude-sonnet-4-6`) |
-| Compliance memo | AWS Bedrock, Claude Sonnet |
-| Cryptography | Python `ecdsa` library, SECP256k1 curve |
-| Key expansion | SHA-256 (128-bit PUF → 256-bit ECDSA private key) |
-| UI | Streamlit |
-| AWS SDK | boto3 |
+| Ring Oscillator PUF (256 ROs, 128-bit response) | Fully implemented in Verilog, functional in Vivado XSim |
+| Fuzzy extractor noise correction | Implemented — simplified 1-bit-per-block prototype |
+| Anti-tamper monitor | Implemented for voltage, temperature, brute-force |
+| Physical silicon entropy | **Simulated** — `CHIP_SEED` parameter mimics manufacturing variation; real entropy comes from actual silicon and cannot be reproduced in RTL simulation |
+| Hardware-to-software key bridge | **Simulated** — key written to `.txt` file by testbench; production would use a secure hardware bus or HSM interface |
+| SWIFT MT700 documents | **Synthetic** — generated with Faker; not real banking documents |
+| IFSCA compliance rules | **Simplified** — 4 rule approximations; real IFSCA compliance is significantly more complex |
 
 ---
 
 ## Team
 
-**Jay Jain** — Electronics & Communication Engineering (Final Year) · RTL/VLSI + AWS Integration  
+**Jay Jain** — Electronics & Communication Engineering (Final Year)  
+RTL/VLSI design, Verilog, Vivado, AWS Bedrock integration, Streamlit UI
+
 **Siddharth Pandey** — Co-developer
 
 ---
