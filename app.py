@@ -1,5 +1,5 @@
 import streamlit as st
-import json, sys, os, time
+import json, sys, os, time, re
 from datetime import datetime
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "agents"))
@@ -214,6 +214,12 @@ div[data-testid="stButton"] > button[kind="primary"]:hover {
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def field(label, value, cls="fv"):
     return f'<div class="field-row"><span class="fl">{label}</span><span class="{cls}">{value}</span></div>'
+
+def md_to_html(text):
+    """Convert **bold** and *italic* Markdown to HTML so it renders in st.html()."""
+    text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
+    text = re.sub(r'\*(.+?)\*',     r'<em>\1</em>',         text)
+    return text
 
 # ── Session state defaults ─────────────────────────────────────────────────────
 if "tx_log"         not in st.session_state: st.session_state["tx_log"]         = []
@@ -574,7 +580,7 @@ if "compliance" in ss:
             </span>
         </div>
         <div style="margin-bottom:4px">{issues_html}</div>
-        <div class="memo-box">📋 {result['compliance_memo']}</div>
+        <div class="memo-box">📋 {md_to_html(result['compliance_memo'])}</div>
         """)
 
 # ── Human-in-the-loop (FLAGGED only) ─────────────────────────────────────────
