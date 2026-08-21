@@ -1,5 +1,5 @@
 import streamlit as st
-import json, sys, os
+import json, sys, os, time
 from datetime import datetime
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "agents"))
@@ -215,16 +215,8 @@ div[data-testid="stButton"] > button[kind="primary"]:hover {
 def field(label, value, cls="fv"):
     return f'<div class="field-row"><span class="fl">{label}</span><span class="{cls}">{value}</span></div>'
 
-def pipe_step(num, label, circle_cls, status_cls, status_text):
-    return f"""
-    <div class="pipe-step">
-        <div class="pipe-circle {circle_cls}">{num}</div>
-        <div class="pipe-label">{label}</div>
-        <div class="pipe-status {status_cls}">{status_text}</div>
-    </div>"""
-
 # ── Session state defaults ─────────────────────────────────────────────────────
-if "tx_log"        not in st.session_state: st.session_state["tx_log"]        = []
+if "tx_log"         not in st.session_state: st.session_state["tx_log"]         = []
 if "payment_result" not in st.session_state: st.session_state["payment_result"] = None
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -286,22 +278,32 @@ with st.sidebar:
     <b>Crypto:</b> ECDSA SECP256k1
     </div>""")
 
-# ── Load doc & reset state on transaction change ───────────────────────────────
-doc           = docs[doc_index]
-swift         = doc["swift"]
-bl            = doc["bill_of_lading"]
+# ── Load doc ──────────────────────────────────────────────────────────────────
+doc            = docs[doc_index]
+swift          = doc["swift"]
+bl             = doc["bill_of_lading"]
 current_doc_id = swift["doc_id"]
 
-# Reset pipeline when transaction OR chip selection changes
-if (st.session_state.get("current_doc_id") != current_doc_id or
-        st.session_state.get("current_chip") != chip):
+# ── Reset state on doc / chip change ─────────────────────────────────────────
+doc_changed  = st.session_state.get("current_doc_id") != current_doc_id
+chip_changed = st.session_state.get("current_chip")   != chip
+
+if doc_changed or chip_changed:
     for k in ["payment_result", "puf_auth", "tx_string"]:
         st.session_state.pop(k, None)
     st.session_state["payment_result"] = None
-    # Also reset compliance/parsed only on doc change
-    if st.session_state.get("current_doc_id") != current_doc_id:
-        for k in ["parsed", "compliance"]:
+
+    if doc_changed:
+        for k in ["parsed", "compliance", "pipeline_done", "pipeline_error"]:
             st.session_state.pop(k, None)
+    elif chip_changed:
+        st.session_state.pop("pipeline_error", None)
+        # CLEARED docs: re-run PUF automatically with the new chip
+        current_comp = st.session_state.get("compliance", {}).get("status")
+        if current_comp == "CLEARED":
+            st.session_state.pop("pipeline_done", None)
+        # FLAGGED/REJECTED: keep pipeline_done — only payment decision needs resetting
+
     st.session_state["current_doc_id"] = current_doc_id
     st.session_state["current_chip"]   = chip
 
@@ -324,95 +326,104 @@ st.html(f"""
     </div>
 </div>""")
 
-# ── Compute pipeline states ───────────────────────────────────────────────────
+# ── Compute pipeline display states ───────────────────────────────────────────
 parsed_done      = "parsed" in ss
 compliance_done  = "compliance" in ss
 compliance_status = ss["compliance"]["status"] if compliance_done else None
 pr               = ss.get("payment_result")
 
-s1_cc, s1_sc, s1_t = ("pc-ok","ps-ok","PARSED") if parsed_done else ("pc-pend","ps-pend","PENDING")
+s1_cc, s1_t = ("ok", "PARSED") if parsed_done else ("pend", "PENDING")
 
 if compliance_done:
-    s2_cc = {"CLEARED":"pc-ok","FLAGGED":"pc-warn","REJECTED":"pc-fail"}[compliance_status]
-    s2_sc = {"CLEARED":"ps-ok","FLAGGED":"ps-warn","REJECTED":"ps-fail"}[compliance_status]
+    s2_cc = {"CLEARED": "ok", "FLAGGED": "warn", "REJECTED": "fail"}[compliance_status]
     s2_t  = compliance_status
 else:
-    s2_cc, s2_sc, s2_t = "pc-pend","ps-pend","PENDING"
+    s2_cc, s2_t = "pend", "PENDING"
 
+# Step 3 — human gate (only relevant for FLAGGED)
 if compliance_done and compliance_status == "REJECTED":
-    s3_cc, s3_sc, s3_t = "pc-fail","ps-fail","BLOCKED"
-elif pr in ("APPROVED","BLOCKED"):
-    s3_cc, s3_sc, s3_t = "pc-ok","ps-ok","APPROVED"
+    s3_cc, s3_t = "fail", "BLOCKED"
+elif pr in ("APPROVED", "BLOCKED"):
+    s3_cc, s3_t = "ok", "SIGNED"
 elif pr == "REJECTED":
-    s3_cc, s3_sc, s3_t = "pc-fail","ps-fail","REJECTED"
+    s3_cc, s3_t = "fail", "REJECTED"
+elif compliance_done and compliance_status == "CLEARED":
+    s3_cc, s3_t = "ok", "AUTO"
 else:
-    s3_cc, s3_sc, s3_t = "pc-pend","ps-pend","PENDING"
+    s3_cc, s3_t = "pend", "PENDING"
 
+# Step 4 — PUF auth
 if compliance_done and compliance_status == "REJECTED":
-    s4_cc, s4_sc, s4_t = "pc-fail","ps-fail","BLOCKED"
+    s4_cc, s4_t = "fail", "BLOCKED"
 elif pr == "APPROVED":
-    s4_cc, s4_sc, s4_t = "pc-ok","ps-ok","CHIP A ✓"
+    s4_cc, s4_t = "ok", "CHIP A ✓"
 elif pr == "BLOCKED":
-    s4_cc, s4_sc, s4_t = "pc-fail","ps-fail","CHIP B ✗"
+    s4_cc, s4_t = "fail", "CHIP B ✗"
 elif pr == "REJECTED":
-    s4_cc, s4_sc, s4_t = "pc-pend","ps-pend","N/A"
+    s4_cc, s4_t = "pend", "N/A"
 else:
-    s4_cc, s4_sc, s4_t = "pc-pend","ps-pend","PENDING"
+    s4_cc, s4_t = "pend", "PENDING"
 
 a1_col = "#059669" if parsed_done     else "#1e2d42"
 a2_col = "#059669" if compliance_done else "#1e2d42"
-a3_col = "#059669" if pr in ("APPROVED","BLOCKED","REJECTED") else "#1e2d42"
+a3_col = "#059669" if pr in ("APPROVED", "BLOCKED", "REJECTED") else "#1e2d42"
 
 COLORS = {
-    "pend": {"bg":"#1a2035","bd":"#2d3748","fg":"#4a5568","st":"#4a5568"},
-    "ok":   {"bg":"#052e16","bd":"#059669","fg":"#34d399","st":"#10b981"},
-    "warn": {"bg":"#3b1f00","bd":"#d97706","fg":"#fcd34d","st":"#f59e0b"},
-    "fail": {"bg":"#3b0000","bd":"#dc2626","fg":"#f87171","st":"#ef4444"},
+    "pend": {"bg": "#1a2035", "bd": "#2d3748", "fg": "#4a5568", "st": "#4a5568"},
+    "ok":   {"bg": "#052e16", "bd": "#059669", "fg": "#34d399", "st": "#10b981"},
+    "warn": {"bg": "#3b1f00", "bd": "#d97706", "fg": "#fcd34d", "st": "#f59e0b"},
+    "fail": {"bg": "#3b0000", "bd": "#dc2626", "fg": "#f87171", "st": "#ef4444"},
 }
 
 def circle(num, label, state, status):
     c = COLORS[state]
-    return f"""<div style="display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;max-width:160px;">
-  <div style="width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1rem;font-weight:800;border:2px solid {c['bd']};background:{c['bg']};color:{c['fg']};">{num}</div>
-  <div style="font-size:0.7rem;color:#718096;text-align:center;line-height:1.3;">{label}</div>
-  <div style="font-size:0.68rem;font-weight:700;text-align:center;color:{c['st']};">{status}</div>
-</div>"""
+    return (
+        f'<div style="display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;max-width:160px;">'
+        f'<div style="width:46px;height:46px;border-radius:50%;display:flex;align-items:center;'
+        f'justify-content:center;font-size:1rem;font-weight:800;border:2px solid {c["bd"]};'
+        f'background:{c["bg"]};color:{c["fg"]};">{num}</div>'
+        f'<div style="font-size:0.7rem;color:#718096;text-align:center;line-height:1.3;">{label}</div>'
+        f'<div style="font-size:0.68rem;font-weight:700;text-align:center;color:{c["st"]};">{status}</div>'
+        f'</div>'
+    )
 
 def arrow(col):
-    return f"""<div style="color:{col};font-size:1.3rem;padding:0 8px;padding-bottom:18px;flex-shrink:0;">&#8594;</div>"""
+    return f'<div style="color:{col};font-size:1.3rem;padding:0 8px;padding-bottom:18px;flex-shrink:0;">&#8594;</div>'
 
-pipe_html = f"""<div style="display:flex;align-items:center;justify-content:center;background:#0d1424;border:1px solid #1a2740;border-radius:14px;padding:18px 28px;margin-bottom:18px;">
-{circle("&#9312;","AI Document Parse",  s1_cc[3:], s1_t)}
-{arrow(a1_col)}
-{circle("&#9313;","IFSCA Compliance",   s2_cc[3:], s2_t)}
-{arrow(a2_col)}
-{circle("&#9314;","Human Approval",     s3_cc[3:], s3_t)}
-{arrow(a3_col)}
-{circle("&#9315;","PUF Authentication", s4_cc[3:], s4_t)}
-</div>"""
-
+pipe_html = (
+    f'<div style="display:flex;align-items:center;justify-content:center;background:#0d1424;'
+    f'border:1px solid #1a2740;border-radius:14px;padding:18px 28px;margin-bottom:18px;">'
+    f'{circle("&#9312;", "AI Document Parse",  s1_cc, s1_t)}'
+    f'{arrow(a1_col)}'
+    f'{circle("&#9313;", "IFSCA Compliance",   s2_cc, s2_t)}'
+    f'{arrow(a2_col)}'
+    f'{circle("&#9314;", "Human Approval",     s3_cc, s3_t)}'
+    f'{arrow(a3_col)}'
+    f'{circle("&#9315;", "PUF Authentication", s4_cc, s4_t)}'
+    f'</div>'
+)
 st.html(pipe_html)
 
 # ── Documents ─────────────────────────────────────────────────────────────────
 col_l, col_r = st.columns(2)
 
 with col_l:
-    amt_cls   = "fv-amount" + (" fv-warn" if swift["amount_usd"] > 200000 else "")
-    amt_note  = "  ⚠ > $200k threshold" if swift["amount_usd"] > 200000 else ""
-    exp_cls   = "fv-bad" if swift["expiry_date"] < swift["issue_date"] else "fv"
+    amt_cls  = "fv-amount" + (" fv-warn" if swift["amount_usd"] > 200000 else "")
+    amt_note = "  ⚠ > $200k threshold" if swift["amount_usd"] > 200000 else ""
+    exp_cls  = "fv-bad" if swift["expiry_date"] < swift["issue_date"] else "fv"
 
     st.html(f"""
     <div class="card">
         <div class="card-title">📄 SWIFT MT700 — Letter of Credit</div>
         <div class="doc-id">{swift['doc_id']}</div>
-        {field("Applicant",       swift['applicant'])}
-        {field("Beneficiary",     swift['beneficiary'])}
-        {field("Issuing Bank",    swift['issuing_bank'])}
-        {field("Amount (USD)",    f"$ {swift['amount_usd']:,.2f}{amt_note}", amt_cls)}
-        {field("Goods",           swift['goods_description'])}
-        {field("Route",           f"{swift['port_of_loading']} → {swift['port_of_discharge']}")}
-        {field("Issue Date",      swift['issue_date'])}
-        {field("Expiry Date",     swift['expiry_date'], exp_cls)}
+        {field("Applicant",    swift['applicant'])}
+        {field("Beneficiary",  swift['beneficiary'])}
+        {field("Issuing Bank", swift['issuing_bank'])}
+        {field("Amount (USD)", f"$ {swift['amount_usd']:,.2f}{amt_note}", amt_cls)}
+        {field("Goods",        swift['goods_description'])}
+        {field("Route",        f"{swift['port_of_loading']} → {swift['port_of_discharge']}")}
+        {field("Issue Date",   swift['issue_date'])}
+        {field("Expiry Date",  swift['expiry_date'], exp_cls)}
     </div>""")
 
 with col_r:
@@ -425,45 +436,92 @@ with col_r:
     <div class="card">
         <div class="card-title">🚢 Bill of Lading</div>
         <div class="doc-id">{bl['bl_number']}</div>
-        {field("Linked LC",       bl['linked_lc'])}
-        {field("Vessel",          f"{bl['vessel']}  ·  {bl['voyage_no']}")}
-        {field("Shipper",         bl['shipper'])}
-        {field("Consignee",       bl['consignee'])}
-        {field("Port of Loading", bl['port_of_loading'] + port_note, port_cls)}
+        {field("Linked LC",         bl['linked_lc'])}
+        {field("Vessel",            f"{bl['vessel']}  ·  {bl['voyage_no']}")}
+        {field("Shipper",           bl['shipper'])}
+        {field("Consignee",         bl['consignee'])}
+        {field("Port of Loading",   bl['port_of_loading'] + port_note, port_cls)}
         {field("Port of Discharge", bl['port_of_discharge'])}
-        {field("Goods Match",     goods_val, goods_cls)}
-        {field("Weight",          f"{bl['gross_weight_kg']:,} kg  ·  {bl['containers']} containers")}
-        {field("BL Date",         bl['bl_date'])}
+        {field("Goods Match",       goods_val, goods_cls)}
+        {field("Weight",            f"{bl['gross_weight_kg']:,} kg  ·  {bl['containers']} containers")}
+        {field("BL Date",           bl['bl_date'])}
     </div>""")
 
-# ── Action buttons ────────────────────────────────────────────────────────────
-b1, b2 = st.columns(2)
+# ── Auto-pipeline ─────────────────────────────────────────────────────────────
+if "pipeline_done" not in ss:
+    needs_agents = "parsed" not in ss or "compliance" not in ss
 
-with b1:
-    if st.button("🤖  Run Agent 1 — AI Document Parse",
-                 use_container_width=True, type="primary"):
-        with st.spinner("Calling AWS Bedrock · Claude Sonnet parsing LC…"):
-            try:
+    with st.status("🔄 Running security pipeline...", expanded=True) as status_box:
+        try:
+            if needs_agents:
+                st.write("🤖 Agent 1 — Parsing document via AWS Bedrock...")
+                time.sleep(1)
                 parsed = parse_document(swift)
                 ss["parsed"] = parsed
-                ss.pop("compliance", None)
-                ss["payment_result"] = None
-                st.rerun()
-            except Exception as e:
-                st.error(f"Agent 1 error — {str(e)[:200]}. Check AWS credentials and try again.")
+                st.write(f"   ✅ Parsed — {parsed.get('summary', '')[:80]}")
 
-with b2:
-    if st.button("🔍  Run Agent 2 — Compliance Check",
-                 use_container_width=True, type="primary",
-                 disabled="parsed" not in ss):
-        with st.spinner("Running IFSCA rules · generating compliance memo…"):
-            try:
-                result = check_compliance(swift, bl, ss["parsed"])
+                time.sleep(1.5)
+                st.write("🔍 Agent 2 — Running IFSCA compliance check...")
+                result = check_compliance(swift, bl, parsed)
                 ss["compliance"] = result
-                ss["payment_result"] = None
-                st.rerun()
-            except Exception as e:
-                st.error(f"Agent 2 error — {str(e)[:200]}. Check AWS credentials and try again.")
+                n = len(result["issues"])
+                issue_str = f" ({n} issue{'s' if n != 1 else ''})" if n else ""
+                st.write(f"   ✅ Compliance decision: {result['status']}{issue_str}")
+
+            comp_status = ss["compliance"]["status"]
+
+            if comp_status == "CLEARED":
+                time.sleep(1)
+                st.write(f"🔐 PUF Authentication — Chip {chip}...")
+                tx = (
+                    f"APPROVE LC {swift['doc_id']} | "
+                    f"USD {swift['amount_usd']} | AUTO-CLEARED"
+                )
+                auth     = sign_transaction(tx, chip=chip)
+                verified = verify_transaction(tx, auth["signature"], _CHIP_A_PUBKEY)
+                ss["payment_result"] = "APPROVED" if verified else "BLOCKED"
+                ss["puf_auth"]       = auth
+                ss["tx_string"]      = tx
+                ss["tx_log"].append({
+                    "doc_id": swift["doc_id"],
+                    "amount": swift["amount_usd"],
+                    "chip":   chip,
+                    "result": ss["payment_result"],
+                    "time":   datetime.now().strftime("%H:%M:%S"),
+                })
+                if verified:
+                    st.write(f"   ✅ Chip {chip} authenticated — payment authorised")
+                    status_box.update(label="Pipeline complete — APPROVED ✅", state="complete")
+                else:
+                    st.write(f"   🚫 Chip {chip} rejected — clone attack detected")
+                    status_box.update(label="Pipeline complete — BLOCKED 🚫", state="complete")
+
+            elif comp_status == "FLAGGED":
+                time.sleep(0.5)
+                st.write("⚠️ Transaction flagged — officer review required before signing")
+                status_box.update(label="⚠️ Awaiting officer approval", state="running")
+
+            else:  # REJECTED
+                time.sleep(0.5)
+                st.write("❌ Critical compliance failures — transaction blocked automatically")
+                status_box.update(
+                    label="❌ Transaction rejected by compliance engine", state="error"
+                )
+
+        except Exception as e:
+            ss["pipeline_error"] = str(e)[:300]
+            status_box.update(label="⚠️ Pipeline error — check AWS credentials", state="error")
+
+        ss["pipeline_done"] = True
+
+    st.rerun()
+
+# ── Pipeline error banner ──────────────────────────────────────────────────────
+if ss.get("pipeline_error"):
+    st.error(
+        f"Pipeline error: {ss['pipeline_error']}\n\n"
+        "Check AWS credentials / Bedrock access, then select a different document to retry."
+    )
 
 # ── Agent 1 result ────────────────────────────────────────────────────────────
 if "parsed" in ss:
@@ -496,8 +554,8 @@ if "parsed" in ss:
 if "compliance" in ss:
     result = ss["compliance"]
     status = result["status"]
-    icon   = {"CLEARED":"✅","FLAGGED":"⚠️","REJECTED":"❌"}[status]
-    s_col  = {"CLEARED":"#10b981","FLAGGED":"#f59e0b","REJECTED":"#ef4444"}[status]
+    icon   = {"CLEARED": "✅", "FLAGGED": "⚠️", "REJECTED": "❌"}[status]
+    s_col  = {"CLEARED": "#10b981", "FLAGGED": "#f59e0b", "REJECTED": "#ef4444"}[status]
 
     issues_html = ""
     for issue in result["issues"]:
@@ -519,12 +577,10 @@ if "compliance" in ss:
         <div class="memo-box">📋 {result['compliance_memo']}</div>
         """)
 
-# ── Human-in-the-loop ─────────────────────────────────────────────────────────
-if "compliance" in ss:
-    compliance_status = ss["compliance"]["status"]
-    st.divider()
-
+# ── Human-in-the-loop (FLAGGED only) ─────────────────────────────────────────
+if compliance_done:
     if compliance_status == "REJECTED":
+        st.divider()
         st.html("""
         <div class="blocked-box">
             <div style="font-size:2rem">🚫</div>
@@ -537,11 +593,10 @@ if "compliance" in ss:
             </div>
         </div>""")
 
-    else:
-        st.markdown("### 👤 Human-in-the-Loop Approval")
-
-        if compliance_status == "FLAGGED":
-            st.warning("⚠️ This transaction is **FLAGGED** — review compliance issues above before approving.")
+    elif compliance_status == "FLAGGED" and pr is None:
+        st.divider()
+        st.markdown("### 👤 Officer Approval Required")
+        st.warning("⚠️ This transaction is **FLAGGED** — review compliance issues above before approving.")
 
         officer_note = st.text_input(
             "Officer Note",
@@ -559,20 +614,11 @@ if "compliance" in ss:
                     f"OFFICER: {officer_note or 'approved'}"
                 )
                 try:
-                    auth = sign_transaction(tx_string, chip=chip)
-                    # Always verify against Chip A's enrolled public key (what the bank has on file)
-                    # Chip A: own key matches enrolled key → verified = True → APPROVED
-                    # Chip B: different silicon → different key → verified = False → BLOCKED
+                    auth     = sign_transaction(tx_string, chip=chip)
                     verified = verify_transaction(tx_string, auth["signature"], _CHIP_A_PUBKEY)
-
-                    if verified:
-                        ss["payment_result"] = "APPROVED"
-                    else:
-                        ss["payment_result"] = "BLOCKED"
-
-                    ss["puf_auth"]   = auth
-                    ss["tx_string"]  = tx_string
-
+                    ss["payment_result"] = "APPROVED" if verified else "BLOCKED"
+                    ss["puf_auth"]       = auth
+                    ss["tx_string"]      = tx_string
                     ss["tx_log"].append({
                         "doc_id": swift["doc_id"],
                         "amount": swift["amount_usd"],
@@ -649,9 +695,9 @@ if ss["tx_log"]:
     st.markdown("#### 📋 Session Transaction Log")
     rows = ""
     for t in reversed(ss["tx_log"]):
-        row_cls = {"APPROVED":"ok","BLOCKED":"fail","REJECTED":"rej"}[t["result"]]
-        res_col = {"APPROVED":"#10b981","BLOCKED":"#ef4444","REJECTED":"#f59e0b"}[t["result"]]
-        em      = {"APPROVED":"✅","BLOCKED":"🚫","REJECTED":"❌"}[t["result"]]
+        row_cls = {"APPROVED": "ok", "BLOCKED": "fail", "REJECTED": "rej"}[t["result"]]
+        res_col = {"APPROVED": "#10b981", "BLOCKED": "#ef4444", "REJECTED": "#f59e0b"}[t["result"]]
+        em      = {"APPROVED": "✅", "BLOCKED": "🚫", "REJECTED": "❌"}[t["result"]]
         rows   += f"""
         <div class="tx-row {row_cls}">
             <span class="tx-doc">{t['doc_id']}</span>
