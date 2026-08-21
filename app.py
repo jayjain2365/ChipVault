@@ -20,7 +20,7 @@ st.set_page_config(
 )
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
-st.markdown("""
+st.html("""
 <style>
 #MainMenu, footer, header { visibility: hidden; }
 .block-container { padding-top: 1.2rem; padding-bottom: 2rem; max-width: 1400px; }
@@ -206,7 +206,7 @@ div[data-testid="stButton"] > button[kind="primary"]:hover {
     box-shadow: 0 4px 14px rgba(59,130,246,0.35);
 }
 </style>
-""", unsafe_allow_html=True)
+""")
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def field(label, value, cls="fv"):
@@ -226,12 +226,12 @@ if "payment_result" not in st.session_state: st.session_state["payment_result"] 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("""
+    st.html("""
     <div style="text-align:center;padding:14px 0 18px">
         <div style="font-size:2rem">🔐</div>
         <div style="font-size:1.05rem;font-weight:800;color:#e2e8f0;margin-top:4px">PUF-Pay</div>
         <div style="font-size:0.68rem;color:#2d3748;margin-top:2px">GIFT City IBU Platform</div>
-    </div>""", unsafe_allow_html=True)
+    </div>""")
 
     st.markdown("**Select Transaction**")
     doc_index = st.selectbox(
@@ -250,17 +250,17 @@ with st.sidebar:
     chip = "A" if chip_label.startswith("A") else "B"
 
     if chip == "A":
-        st.markdown("""<div style="background:#042214;border:1px solid #059669;border-radius:7px;
+        st.html("""<div style="background:#042214;border:1px solid #059669;border-radius:7px;
             padding:9px 12px;font-size:0.73rem;color:#34d399;margin-top:4px;">
             ✓ Chip A · Enrolled trusted device<br>
             <span style="color:#065f46;font-size:0.67rem">SECP256k1 · PUF-derived key</span>
-        </div>""", unsafe_allow_html=True)
+        </div>""")
     else:
-        st.markdown("""<div style="background:#280000;border:1px solid #dc2626;border-radius:7px;
+        st.html("""<div style="background:#280000;border:1px solid #dc2626;border-radius:7px;
             padding:9px 12px;font-size:0.73rem;color:#f87171;margin-top:4px;">
             ⚠ Chip B · Simulates clone / attacker<br>
             <span style="color:#7f1d1d;font-size:0.67rem">Different silicon → different key</span>
-        </div>""", unsafe_allow_html=True)
+        </div>""")
 
     st.divider()
 
@@ -273,7 +273,7 @@ with st.sidebar:
 
     st.divider()
 
-    st.markdown("""<div class="puf-explainer">
+    st.html("""<div class="puf-explainer">
     <b>What is a PUF?</b><br>
     Every chip has microscopic silicon variations from manufacturing. A Ring Oscillator PUF
     measures these to generate a <b>unique 128-bit fingerprint</b> — never stored, regenerated
@@ -281,7 +281,7 @@ with st.sidebar:
     <b>Hardware:</b> 256 Ring Oscillators · Fuzzy Extractor · Verilog / Vivado XSim<br>
     <b>AI:</b> AWS Bedrock · Claude Sonnet · IFSCA Compliance<br>
     <b>Crypto:</b> ECDSA SECP256k1
-    </div>""", unsafe_allow_html=True)
+    </div>""")
 
 # ── Load doc & reset state on transaction change ───────────────────────────────
 doc           = docs[doc_index]
@@ -298,7 +298,7 @@ if st.session_state.get("current_doc_id") != current_doc_id:
 ss = st.session_state
 
 # ── Header ────────────────────────────────────────────────────────────────────
-st.markdown(f"""
+st.html(f"""
 <div class="puf-header">
     <div>
         <div class="puf-header-title">🔐 PUF-Pay</div>
@@ -312,7 +312,7 @@ st.markdown(f"""
         <span class="badge">IFSCA Compliance</span>
         <span class="badge">LC: {current_doc_id}</span>
     </div>
-</div>""", unsafe_allow_html=True)
+</div>""")
 
 # ── Compute pipeline states ───────────────────────────────────────────────────
 parsed_done      = "parsed" in ss
@@ -353,7 +353,7 @@ a1 = "done" if parsed_done      else ""
 a2 = "done" if compliance_done  else ""
 a3 = "done" if pr in ("APPROVED","BLOCKED","REJECTED") else ""
 
-st.markdown(f"""
+st.html(f"""
 <div class="pipe-wrap">
     {pipe_step("①","AI Document<br>Parse",    s1_cc, s1_sc, s1_t)}
     <div class="pipe-arrow {a1}">→</div>
@@ -362,7 +362,7 @@ st.markdown(f"""
     {pipe_step("③","Human<br>Approval",       s3_cc, s3_sc, s3_t)}
     <div class="pipe-arrow {a3}">→</div>
     {pipe_step("④","PUF<br>Authentication",   s4_cc, s4_sc, s4_t)}
-</div>""", unsafe_allow_html=True)
+</div>""")
 
 # ── Documents ─────────────────────────────────────────────────────────────────
 col_l, col_r = st.columns(2)
@@ -372,7 +372,7 @@ with col_l:
     amt_note  = "  ⚠ > $200k threshold" if swift["amount_usd"] > 200000 else ""
     exp_cls   = "fv-bad" if swift["expiry_date"] < swift["issue_date"] else "fv"
 
-    st.markdown(f"""
+    st.html(f"""
     <div class="card">
         <div class="card-title">📄 SWIFT MT700 — Letter of Credit</div>
         <div class="doc-id">{swift['doc_id']}</div>
@@ -384,7 +384,7 @@ with col_l:
         {field("Route",           f"{swift['port_of_loading']} → {swift['port_of_discharge']}")}
         {field("Issue Date",      swift['issue_date'])}
         {field("Expiry Date",     swift['expiry_date'], exp_cls)}
-    </div>""", unsafe_allow_html=True)
+    </div>""")
 
 with col_r:
     port_cls  = "fv-bad" if bl["port_of_loading"] != swift["port_of_loading"] else "fv-ok"
@@ -392,7 +392,7 @@ with col_r:
     goods_cls = "fv-bad" if not bl["goods_match"] else "fv-ok"
     goods_val = "✓ Match" if bl["goods_match"] else "✗ MISMATCH"
 
-    st.markdown(f"""
+    st.html(f"""
     <div class="card">
         <div class="card-title">🚢 Bill of Lading</div>
         <div class="doc-id">{bl['bl_number']}</div>
@@ -405,7 +405,7 @@ with col_r:
         {field("Goods Match",     goods_val, goods_cls)}
         {field("Weight",          f"{bl['gross_weight_kg']:,} kg  ·  {bl['containers']} containers")}
         {field("BL Date",         bl['bl_date'])}
-    </div>""", unsafe_allow_html=True)
+    </div>""")
 
 # ── Action buttons ────────────────────────────────────────────────────────────
 b1, b2 = st.columns(2)
@@ -442,26 +442,26 @@ if "parsed" in ss:
     with st.expander("Agent 1 — Parsed Fields  (AWS Bedrock output)", expanded=False):
         g1, g2 = st.columns(2)
         with g1:
-            st.markdown(f"""
+            st.html(f"""
             <div style="font-size:0.77rem;line-height:2">
                 <span style="color:#4a6080">Applicant:</span>  <span style="color:#cbd5e0">{p.get('applicant','—')}</span><br>
                 <span style="color:#4a6080">Beneficiary:</span> <span style="color:#cbd5e0">{p.get('beneficiary','—')}</span><br>
                 <span style="color:#4a6080">Amount:</span> <span style="color:#34d399;font-weight:700">USD {p.get('amount_usd','—')}</span><br>
                 <span style="color:#4a6080">Currency:</span> <span style="color:#cbd5e0">{p.get('currency','—')}</span>
-            </div>""", unsafe_allow_html=True)
+            </div>""")
         with g2:
-            st.markdown(f"""
+            st.html(f"""
             <div style="font-size:0.77rem;line-height:2">
                 <span style="color:#4a6080">Port of Loading:</span>  <span style="color:#cbd5e0">{p.get('port_of_loading','—')}</span><br>
                 <span style="color:#4a6080">Port of Discharge:</span> <span style="color:#cbd5e0">{p.get('port_of_discharge','—')}</span><br>
                 <span style="color:#4a6080">Issue Date:</span> <span style="color:#cbd5e0">{p.get('issue_date','—')}</span><br>
                 <span style="color:#4a6080">Expiry Date:</span> <span style="color:#cbd5e0">{p.get('expiry_date','—')}</span>
-            </div>""", unsafe_allow_html=True)
-        st.markdown(f"""
+            </div>""")
+        st.html(f"""
         <div style="margin-top:10px;padding:10px 14px;background:#060c18;border:1px solid #1e3a5f;
              border-radius:7px;font-size:0.76rem;color:#8899aa;line-height:1.6;">
             <span style="color:#3a6080">AI Summary: </span>{p.get('summary','—')}
-        </div>""", unsafe_allow_html=True)
+        </div>""")
 
 # ── Agent 2 result ────────────────────────────────────────────────────────────
 if "compliance" in ss:
@@ -478,7 +478,7 @@ if "compliance" in ss:
         issues_html = '<span style="color:#10b981;font-size:0.78rem">No compliance issues found.</span>'
 
     with st.expander(f"Agent 2 — Compliance Result:  {status}", expanded=True):
-        st.markdown(f"""
+        st.html(f"""
         <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
             <span style="font-size:1.9rem">{icon}</span>
             <span style="font-size:1.5rem;font-weight:800;color:{s_col}">{status}</span>
@@ -488,7 +488,7 @@ if "compliance" in ss:
         </div>
         <div style="margin-bottom:4px">{issues_html}</div>
         <div class="memo-box">📋 {result['compliance_memo']}</div>
-        """, unsafe_allow_html=True)
+        """)
 
 # ── Human-in-the-loop ─────────────────────────────────────────────────────────
 if "compliance" in ss:
@@ -496,7 +496,7 @@ if "compliance" in ss:
     st.divider()
 
     if compliance_status == "REJECTED":
-        st.markdown("""
+        st.html("""
         <div class="blocked-box">
             <div style="font-size:2rem">🚫</div>
             <div style="font-size:1.05rem;font-weight:700;color:#ef4444;margin:8px 0 4px">
@@ -506,7 +506,7 @@ if "compliance" in ss:
                 Critical compliance issues prevent this transaction from proceeding.<br>
                 Human approval and PUF authentication are not available.
             </div>
-        </div>""", unsafe_allow_html=True)
+        </div>""")
 
     else:
         st.markdown("### 👤 Human-in-the-Loop Approval")
@@ -569,7 +569,7 @@ pr = ss.get("payment_result")
 
 if pr == "APPROVED" and "puf_auth" in ss:
     auth = ss["puf_auth"]
-    st.markdown(f"""
+    st.html(f"""
     <div class="banner-approved">
         <div style="font-size:2.5rem">✅</div>
         <div class="banner-title" style="color:#34d399">Payment Authorised</div>
@@ -584,10 +584,10 @@ if pr == "APPROVED" and "puf_auth" in ss:
                 ↑ ECDSA SECP256k1 · Private key regenerated from silicon PUF at signing time — never stored in memory
             </span>
         </div>
-    </div>""", unsafe_allow_html=True)
+    </div>""")
 
 elif pr == "BLOCKED":
-    st.markdown(f"""
+    st.html(f"""
     <div class="banner-blocked">
         <div style="font-size:2.5rem">🚫</div>
         <div class="banner-title" style="color:#f87171">Clone Attack Detected — Payment Blocked</div>
@@ -601,15 +601,15 @@ elif pr == "BLOCKED":
             <div>→</div>
             <div>❌ Invalid signature</div>
         </div>
-    </div>""", unsafe_allow_html=True)
+    </div>""")
 
 elif pr == "REJECTED":
-    st.markdown("""
+    st.html("""
     <div class="banner-rejected">
         <div style="font-size:1.8rem">❌</div>
         <div class="banner-title" style="color:#f59e0b">Transaction Rejected by Officer</div>
         <div class="banner-sub">PUF authentication was not executed.</div>
-    </div>""", unsafe_allow_html=True)
+    </div>""")
 
 # ── Transaction log ───────────────────────────────────────────────────────────
 if ss["tx_log"]:
@@ -628,4 +628,4 @@ if ss["tx_log"]:
             <span class="tx-res" style="color:{res_col}">{em} {t['result']}</span>
             <span class="tx-time">{t['time']}</span>
         </div>"""
-    st.markdown(rows, unsafe_allow_html=True)
+    st.html(rows)
