@@ -57,6 +57,8 @@ Write a 2-line compliance decision memo. Be formal and concise."""
 
 
 if __name__ == "__main__":
+    import sys
+    sys.stdout.reconfigure(encoding="utf-8")
     with open("synthetic_docs.json") as f:
         docs = json.load(f)
 
@@ -67,6 +69,6 @@ if __name__ == "__main__":
         print(f"Doc {i+1}: {result['status']}")
         if result['issues']:
             for issue in result['issues']:
-                print(f"  → {issue}")
+                print(f"  -> {issue}")
         print(f"  Memo: {result['compliance_memo'][:100]}...")
         print()

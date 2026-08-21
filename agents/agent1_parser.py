@@ -46,9 +46,11 @@ Document:
 
 # Test it
 if __name__ == "__main__":
+    import sys
+    sys.stdout.reconfigure(encoding="utf-8")
     with open("synthetic_docs.json") as f:
         docs = json.load(f)
-    
+
     print("Testing Agent 1 on first document...\n")
     parsed = parse_document(docs[0]["swift"])
-    print(json.dumps(parsed, indent=2))
+    print(json.dumps(parsed, indent=2, ensure_ascii=False))
