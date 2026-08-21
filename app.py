@@ -295,20 +295,16 @@ doc_changed  = st.session_state.get("current_doc_id") != current_doc_id
 chip_changed = st.session_state.get("current_chip")   != chip
 
 if doc_changed or chip_changed:
-    for k in ["payment_result", "puf_auth", "tx_string"]:
+    for k in ["payment_result", "puf_auth", "tx_string", "pipeline_error"]:
         st.session_state.pop(k, None)
     st.session_state["payment_result"] = None
 
     if doc_changed:
-        for k in ["parsed", "compliance", "pipeline_done", "pipeline_error"]:
+        # Full reset on doc change — agents must re-run for new document
+        for k in ["parsed", "compliance"]:
             st.session_state.pop(k, None)
-    elif chip_changed:
-        st.session_state.pop("pipeline_error", None)
-        # CLEARED docs: re-run PUF automatically with the new chip
-        current_comp = st.session_state.get("compliance", {}).get("status")
-        if current_comp == "CLEARED":
-            st.session_state.pop("pipeline_done", None)
-        # FLAGGED/REJECTED: keep pipeline_done — only payment decision needs resetting
+    # chip_changed only: keep parsed/compliance (no need to re-run agents)
+    # payment_result already cleared above → PUF will re-run for CLEARED docs
 
     st.session_state["current_doc_id"] = current_doc_id
     st.session_state["current_chip"]   = chip
@@ -453,73 +449,47 @@ with col_r:
         {field("BL Date",           bl['bl_date'])}
     </div>""")
 
-# ── Auto-pipeline ─────────────────────────────────────────────────────────────
-if "pipeline_done" not in ss:
-    needs_agents = "parsed" not in ss or "compliance" not in ss
-
-    with st.status("🔄 Running security pipeline...", expanded=True) as status_box:
+# ── Auto-pipeline (one stage per rerun — data presence is the state gate) ─────
+if "parsed" not in ss:
+    with st.spinner("🤖 Agent 1 — Parsing document via AWS Bedrock..."):
+        time.sleep(1)
         try:
-            if needs_agents:
-                st.write("🤖 Agent 1 — Parsing document via AWS Bedrock...")
-                time.sleep(1)
-                parsed = parse_document(swift)
-                ss["parsed"] = parsed
-                st.write(f"   ✅ Parsed — {parsed.get('summary', '')[:80]}")
-
-                time.sleep(1.5)
-                st.write("🔍 Agent 2 — Running IFSCA compliance check...")
-                result = check_compliance(swift, bl, parsed)
-                ss["compliance"] = result
-                n = len(result["issues"])
-                issue_str = f" ({n} issue{'s' if n != 1 else ''})" if n else ""
-                st.write(f"   ✅ Compliance decision: {result['status']}{issue_str}")
-
-            comp_status = ss["compliance"]["status"]
-
-            if comp_status == "CLEARED":
-                time.sleep(1)
-                st.write(f"🔐 PUF Authentication — Chip {chip}...")
-                tx = (
-                    f"APPROVE LC {swift['doc_id']} | "
-                    f"USD {swift['amount_usd']} | AUTO-CLEARED"
-                )
-                auth     = sign_transaction(tx, chip=chip)
-                verified = verify_transaction(tx, auth["signature"], _CHIP_A_PUBKEY)
-                ss["payment_result"] = "APPROVED" if verified else "BLOCKED"
-                ss["puf_auth"]       = auth
-                ss["tx_string"]      = tx
-                ss["tx_log"].append({
-                    "doc_id": swift["doc_id"],
-                    "amount": swift["amount_usd"],
-                    "chip":   chip,
-                    "result": ss["payment_result"],
-                    "time":   datetime.now().strftime("%H:%M:%S"),
-                })
-                if verified:
-                    st.write(f"   ✅ Chip {chip} authenticated — payment authorised")
-                    status_box.update(label="Pipeline complete — APPROVED ✅", state="complete")
-                else:
-                    st.write(f"   🚫 Chip {chip} rejected — clone attack detected")
-                    status_box.update(label="Pipeline complete — BLOCKED 🚫", state="complete")
-
-            elif comp_status == "FLAGGED":
-                time.sleep(0.5)
-                st.write("⚠️ Transaction flagged — officer review required before signing")
-                status_box.update(label="⚠️ Awaiting officer approval", state="running")
-
-            else:  # REJECTED
-                time.sleep(0.5)
-                st.write("❌ Critical compliance failures — transaction blocked automatically")
-                status_box.update(
-                    label="❌ Transaction rejected by compliance engine", state="error"
-                )
-
+            ss["parsed"] = parse_document(swift)
         except Exception as e:
-            ss["pipeline_error"] = str(e)[:300]
-            status_box.update(label="⚠️ Pipeline error — check AWS credentials", state="error")
+            ss["pipeline_error"] = f"Agent 1 failed: {str(e)[:200]}"
+    st.rerun()
 
-        ss["pipeline_done"] = True
+elif "compliance" not in ss:
+    with st.spinner("🔍 Agent 2 — Running IFSCA compliance check..."):
+        time.sleep(1)
+        try:
+            ss["compliance"] = check_compliance(swift, bl, ss["parsed"])
+        except Exception as e:
+            ss["pipeline_error"] = f"Agent 2 failed: {str(e)[:200]}"
+    st.rerun()
 
+elif ss["compliance"]["status"] == "CLEARED" and ss.get("payment_result") is None:
+    with st.spinner(f"🔐 Agent 3 — PUF Authentication (Chip {chip})..."):
+        time.sleep(1)
+        try:
+            tx = (
+                f"APPROVE LC {swift['doc_id']} | "
+                f"USD {swift['amount_usd']} | AUTO-CLEARED"
+            )
+            auth     = sign_transaction(tx, chip=chip)
+            verified = verify_transaction(tx, auth["signature"], _CHIP_A_PUBKEY)
+            ss["payment_result"] = "APPROVED" if verified else "BLOCKED"
+            ss["puf_auth"]       = auth
+            ss["tx_string"]      = tx
+            ss["tx_log"].append({
+                "doc_id": swift["doc_id"],
+                "amount": swift["amount_usd"],
+                "chip":   chip,
+                "result": ss["payment_result"],
+                "time":   datetime.now().strftime("%H:%M:%S"),
+            })
+        except Exception as e:
+            ss["pipeline_error"] = f"PUF auth failed: {str(e)[:200]}"
     st.rerun()
 
 # ── Pipeline error banner ──────────────────────────────────────────────────────
