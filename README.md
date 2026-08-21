@@ -198,10 +198,11 @@ We believe transparency matters more than hype. Here is exactly what is simulate
 | Claim | Reality |
 |---|---|
 | Ring Oscillator PUF (256 ROs, 128-bit response) | Fully implemented in Verilog, functional in Vivado XSim |
-| Fuzzy extractor noise correction | Implemented — simplified 1-bit-per-block prototype |
-| Anti-tamper monitor | Implemented for voltage, temperature, brute-force |
-| Physical silicon entropy | **Simulated** — `CHIP_SEED` parameter mimics manufacturing variation; real entropy comes from actual silicon and cannot be reproduced in RTL simulation |
-| Hardware-to-software key bridge | **Simulated** — key written to `.txt` file by testbench; production would use a secure hardware bus or HSM interface |
+| Fuzzy extractor noise correction | Implemented — simplified 1-bit-per-block (Hamming-style). Production would use BCH(255,131) for multi-bit tolerance |
+| Anti-tamper monitor | Implemented for voltage glitch, temperature attack, brute-force (zeroize + sticky lock after 3 failures) |
+| Physical silicon entropy | **Simulated** — `CHIP_SEED` + hash-mixing injects deterministic pseudo-randomness per RO. On real Artix-7 silicon, entropy comes from manufacturing variation — no `CHIP_SEED` would exist in the synthesized design |
+| Fuzzy extractor enrollment memory | **Simplified** — golden PUF response stored in an internal register. Production secure element would store only helper data (parity bits) in protected NVM, never the raw response |
+| Hardware-to-software key bridge | **Simulated** — 128-bit key written to `.txt` file by Vivado testbench; production uses a secure internal hardware bus in nanoseconds |
 | SWIFT MT700 documents | **Synthetic** — generated with Faker; not real banking documents |
 | IFSCA compliance rules | **Simplified** — 4 rule approximations; real IFSCA compliance is significantly more complex |
 

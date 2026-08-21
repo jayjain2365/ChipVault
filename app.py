@@ -256,6 +256,7 @@ def persist_tx(entry: dict) -> None:
 # ── Session state defaults ─────────────────────────────────────────────────────
 if "tx_log"         not in st.session_state: st.session_state["tx_log"]         = []
 if "payment_result" not in st.session_state: st.session_state["payment_result"] = None
+if "auth_fail_count" not in st.session_state: st.session_state["auth_fail_count"] = 0
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -282,17 +283,37 @@ with st.sidebar:
     )
     chip = "A" if chip_label.startswith("A") else "B"
 
+    enrolled_key_short = _CHIP_A_PUBKEY[:24] + "…"
+    fail_count = st.session_state.get("auth_fail_count", 0)
+    lockout = fail_count >= 3
+
     if chip == "A":
-        st.html("""<div style="background:#042214;border:1px solid #059669;border-radius:7px;
+        st.html(f"""<div style="background:#042214;border:1px solid #059669;border-radius:7px;
             padding:9px 12px;font-size:0.73rem;color:#34d399;margin-top:4px;">
             ✓ Chip A · Enrolled trusted device<br>
-            <span style="color:#065f46;font-size:0.67rem">SECP256k1 · PUF-derived key</span>
+            <span style="color:#065f46;font-size:0.67rem">SECP256k1 · PUF-derived key</span><br>
+            <span style="color:#1e3a2e;font-size:0.63rem;font-family:monospace">
+            Bank registered key: {enrolled_key_short}</span>
         </div>""")
     else:
-        st.html("""<div style="background:#280000;border:1px solid #dc2626;border-radius:7px;
+        st.html(f"""<div style="background:#280000;border:1px solid #dc2626;border-radius:7px;
             padding:9px 12px;font-size:0.73rem;color:#f87171;margin-top:4px;">
             ⚠ Chip B · Simulates clone / attacker<br>
-            <span style="color:#7f1d1d;font-size:0.67rem">Different silicon → different key</span>
+            <span style="color:#7f1d1d;font-size:0.67rem">Different silicon → different key</span><br>
+            <span style="color:#3b0000;font-size:0.63rem;font-family:monospace">
+            Bank registered key: {enrolled_key_short}</span>
+        </div>""")
+
+    if lockout:
+        st.html("""<div style="background:#1c0505;border:1px solid #dc2626;border-radius:7px;
+            padding:8px 12px;font-size:0.72rem;color:#f87171;margin-top:6px;text-align:center;">
+            🔒 DEVICE LOCKED — 3 auth failures<br>
+            <span style="color:#7f1d1d;font-size:0.65rem">Anti-tamper lockout active (matches hardware)</span>
+        </div>""")
+    elif fail_count > 0:
+        st.html(f"""<div style="background:#3b1f00;border:1px solid #d97706;border-radius:7px;
+            padding:7px 12px;font-size:0.71rem;color:#fcd34d;margin-top:6px;text-align:center;">
+            ⚠ Auth failures: {fail_count}/3 — lockout on next failure
         </div>""")
 
     st.divider()
@@ -481,6 +502,23 @@ with col_r:
         {field("BL Date",           bl['bl_date'])}
     </div>""")
 
+# ── Brute-force lockout gate (mirrors anti_tamper.v hardware behaviour) ───────
+if lockout:
+    st.html("""
+    <div style="background:#1c0505;border:1px solid #7f1d1d;border-radius:12px;
+         padding:24px;text-align:center;margin:16px 0;">
+        <div style="font-size:2rem">🔒</div>
+        <div style="font-size:1.1rem;font-weight:800;color:#ef4444;margin:8px 0 4px">
+            Device Locked — Anti-Tamper Active
+        </div>
+        <div style="color:#718096;font-size:0.8rem">
+            3 consecutive authentication failures detected.<br>
+            Hardware zeroizes key and locks the system — matching <code>anti_tamper.v</code> behaviour.<br>
+            Refresh the page to simulate a hardware reset.
+        </div>
+    </div>""")
+    st.stop()
+
 # ── Auto-pipeline (one stage per rerun — data presence is the state gate) ─────
 if "parsed" not in ss:
     with st.spinner("🤖 Agent 1 — Parsing document via AWS Bedrock..."):
@@ -510,6 +548,10 @@ elif ss["compliance"]["status"] == "CLEARED" and ss.get("payment_result") is Non
             ss["payment_result"] = "APPROVED" if verified else "BLOCKED"
             ss["puf_auth"]       = auth
             ss["tx_string"]      = tx
+            if not verified:
+                ss["auth_fail_count"] = ss.get("auth_fail_count", 0) + 1
+            else:
+                ss["auth_fail_count"] = 0  # reset on success
             log_entry = {
                 "doc_id":    swift["doc_id"],
                 "amount":    swift["amount_usd"],
@@ -626,6 +668,10 @@ if compliance_done:
                     ss["payment_result"] = "APPROVED" if verified else "BLOCKED"
                     ss["puf_auth"]       = auth
                     ss["tx_string"]      = tx_string
+                    if not verified:
+                        ss["auth_fail_count"] = ss.get("auth_fail_count", 0) + 1
+                    else:
+                        ss["auth_fail_count"] = 0
                     log_entry = {
                         "doc_id":    swift["doc_id"],
                         "amount":    swift["amount_usd"],
