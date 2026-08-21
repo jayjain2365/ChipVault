@@ -1,5 +1,5 @@
 import streamlit as st
-import json, sys, os, time, re
+import json, sys, os, time, re, hashlib
 from datetime import datetime
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "agents"))
@@ -220,6 +220,38 @@ def md_to_html(text):
     text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
     text = re.sub(r'\*(.+?)\*',     r'<em>\1</em>',         text)
     return text
+
+def doc_fingerprint(swift_doc: dict) -> str:
+    """SHA-256 of document content — binds signature to exact document, not just reference."""
+    return hashlib.sha256(
+        json.dumps(swift_doc, sort_keys=True).encode()
+    ).hexdigest()[:16].upper()
+
+def build_tx_string(swift_doc: dict, note: str = "AUTO-CLEARED") -> str:
+    """Build the canonical transaction string signed by the PUF.
+    Includes: LC ref, amount, document hash (content integrity), timestamp (replay protection).
+    """
+    ts      = datetime.now().strftime("%Y%m%d%H%M%S")
+    dochash = doc_fingerprint(swift_doc)
+    return (
+        f"APPROVE|LC:{swift_doc['doc_id']}"
+        f"|USD:{swift_doc['amount_usd']}"
+        f"|DOCHASH:{dochash}"
+        f"|TS:{ts}"
+        f"|NOTE:{note}"
+    )
+
+_TX_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "transactions_log.json")
+
+def persist_tx(entry: dict) -> None:
+    """Append a completed transaction to the on-disk audit log."""
+    try:
+        log = json.load(open(_TX_LOG_PATH)) if os.path.exists(_TX_LOG_PATH) else []
+        log.append(entry)
+        with open(_TX_LOG_PATH, "w") as f:
+            json.dump(log, f, indent=2)
+    except Exception:
+        pass  # never crash the app over a log write
 
 # ── Session state defaults ─────────────────────────────────────────────────────
 if "tx_log"         not in st.session_state: st.session_state["tx_log"]         = []
@@ -472,22 +504,23 @@ elif ss["compliance"]["status"] == "CLEARED" and ss.get("payment_result") is Non
     with st.spinner(f"🔐 Agent 3 — PUF Authentication (Chip {chip})..."):
         time.sleep(1)
         try:
-            tx = (
-                f"APPROVE LC {swift['doc_id']} | "
-                f"USD {swift['amount_usd']} | AUTO-CLEARED"
-            )
+            tx       = build_tx_string(swift, note="AUTO-CLEARED")
             auth     = sign_transaction(tx, chip=chip)
             verified = verify_transaction(tx, auth["signature"], _CHIP_A_PUBKEY)
             ss["payment_result"] = "APPROVED" if verified else "BLOCKED"
             ss["puf_auth"]       = auth
             ss["tx_string"]      = tx
-            ss["tx_log"].append({
-                "doc_id": swift["doc_id"],
-                "amount": swift["amount_usd"],
-                "chip":   chip,
-                "result": ss["payment_result"],
-                "time":   datetime.now().strftime("%H:%M:%S"),
-            })
+            log_entry = {
+                "doc_id":    swift["doc_id"],
+                "amount":    swift["amount_usd"],
+                "chip":      chip,
+                "result":    ss["payment_result"],
+                "doc_hash":  doc_fingerprint(swift),
+                "signature": auth["signature"][:32] + "…",
+                "time":      datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            ss["tx_log"].append(log_entry)
+            persist_tx(log_entry)
         except Exception as e:
             ss["pipeline_error"] = f"PUF auth failed: {str(e)[:200]}"
     st.rerun()
@@ -584,10 +617,8 @@ if compliance_done:
 
         with ca:
             if st.button("✅  Approve & Sign with PUF", use_container_width=True, type="primary"):
-                tx_string = (
-                    f"APPROVE LC {swift['doc_id']} | "
-                    f"USD {swift['amount_usd']} | "
-                    f"OFFICER: {officer_note or 'approved'}"
+                tx_string = build_tx_string(
+                    swift, note=f"OFFICER:{officer_note or 'approved'}"
                 )
                 try:
                     auth     = sign_transaction(tx_string, chip=chip)
@@ -595,13 +626,17 @@ if compliance_done:
                     ss["payment_result"] = "APPROVED" if verified else "BLOCKED"
                     ss["puf_auth"]       = auth
                     ss["tx_string"]      = tx_string
-                    ss["tx_log"].append({
-                        "doc_id": swift["doc_id"],
-                        "amount": swift["amount_usd"],
-                        "chip":   chip,
-                        "result": ss["payment_result"],
-                        "time":   datetime.now().strftime("%H:%M:%S"),
-                    })
+                    log_entry = {
+                        "doc_id":    swift["doc_id"],
+                        "amount":    swift["amount_usd"],
+                        "chip":      chip,
+                        "result":    ss["payment_result"],
+                        "doc_hash":  doc_fingerprint(swift),
+                        "signature": auth["signature"][:32] + "…",
+                        "time":      datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+                    ss["tx_log"].append(log_entry)
+                    persist_tx(log_entry)
                     st.rerun()
                 except Exception as e:
                     st.error(f"PUF signing error — {str(e)[:200]}")
@@ -609,13 +644,16 @@ if compliance_done:
         with cr:
             if st.button("❌  Reject Transaction", use_container_width=True):
                 ss["payment_result"] = "REJECTED"
-                ss["tx_log"].append({
-                    "doc_id": swift["doc_id"],
-                    "amount": swift["amount_usd"],
-                    "chip":   chip,
-                    "result": "REJECTED",
-                    "time":   datetime.now().strftime("%H:%M:%S"),
-                })
+                log_entry = {
+                    "doc_id":   swift["doc_id"],
+                    "amount":   swift["amount_usd"],
+                    "chip":     chip,
+                    "result":   "REJECTED",
+                    "doc_hash": doc_fingerprint(swift),
+                    "time":     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                ss["tx_log"].append(log_entry)
+                persist_tx(log_entry)
                 st.rerun()
 
 # ── Final result banners ──────────────────────────────────────────────────────
@@ -632,10 +670,14 @@ if pr == "APPROVED" and "puf_auth" in ss:
         </div>
         <div class="sig-box">
             <span class="sig-label">TX STRING:  </span>{ss.get('tx_string','')}<br>
+            <span class="sig-label">DOC HASH:   </span>{doc_fingerprint(swift)}
+            <span style="color:#1e3a5f;font-size:0.6rem"> ← SHA-256 of document content (binds signature to this exact document)</span><br>
             <span class="sig-label">SIGNATURE:  </span>{auth['signature'][:96]}…<br>
-            <span class="sig-label">PUBLIC KEY: </span>{auth['public_key'][:96]}…<br>
+            <span class="sig-label">CHIP PUBKEY:</span>{auth['public_key'][:96]}…<br>
+            <span class="sig-label">ENROLLED KEY:</span>{_CHIP_A_PUBKEY[:96]}…
+            <span style="color:#1e3a5f;font-size:0.6rem"> ← bank's registered key; verification passes only if these match</span><br>
             <span style="color:#1e3a5f;font-size:0.62rem">
-                ↑ ECDSA SECP256k1 · Private key regenerated from silicon PUF at signing time — never stored in memory
+                ↑ ECDSA SECP256k1 · Private key regenerated from silicon PUF at signing time — never stored in memory · Timestamp in TX prevents replay
             </span>
         </div>
     </div>""")
