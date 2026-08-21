@@ -11,6 +11,9 @@ from agent3_puf_auth import sign_transaction, verify_transaction
 with open("synthetic_docs.json") as f:
     docs = json.load(f)
 
+# Chip A's enrolled public key — derived once at startup (this is what the bank stores)
+_CHIP_A_PUBKEY = sign_transaction("ENROLLMENT", chip="A")["public_key"]
+
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="PUF-Pay | GIFT City Trade Finance",
@@ -289,11 +292,18 @@ swift         = doc["swift"]
 bl            = doc["bill_of_lading"]
 current_doc_id = swift["doc_id"]
 
-if st.session_state.get("current_doc_id") != current_doc_id:
-    for k in ["parsed", "compliance", "payment_result", "puf_auth", "tx_string"]:
+# Reset pipeline when transaction OR chip selection changes
+if (st.session_state.get("current_doc_id") != current_doc_id or
+        st.session_state.get("current_chip") != chip):
+    for k in ["payment_result", "puf_auth", "tx_string"]:
         st.session_state.pop(k, None)
-    st.session_state["current_doc_id"] = current_doc_id
     st.session_state["payment_result"] = None
+    # Also reset compliance/parsed only on doc change
+    if st.session_state.get("current_doc_id") != current_doc_id:
+        for k in ["parsed", "compliance"]:
+            st.session_state.pop(k, None)
+    st.session_state["current_doc_id"] = current_doc_id
+    st.session_state["current_chip"]   = chip
 
 ss = st.session_state
 
@@ -530,10 +540,13 @@ if "compliance" in ss:
                     f"OFFICER: {officer_note or 'approved'}"
                 )
                 try:
-                    auth     = sign_transaction(tx_string, chip=chip)
-                    verified = verify_transaction(tx_string, auth["signature"], auth["public_key"])
+                    auth = sign_transaction(tx_string, chip=chip)
+                    # Always verify against Chip A's enrolled public key (what the bank has on file)
+                    # Chip A: own key matches enrolled key → verified = True → APPROVED
+                    # Chip B: different silicon → different key → verified = False → BLOCKED
+                    verified = verify_transaction(tx_string, auth["signature"], _CHIP_A_PUBKEY)
 
-                    if chip == "A" and verified:
+                    if verified:
                         ss["payment_result"] = "APPROVED"
                     else:
                         ss["payment_result"] = "BLOCKED"
