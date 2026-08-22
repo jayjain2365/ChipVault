@@ -1,0 +1,21 @@
+Time resolution is 1 ps
+==============================================
+  TWO-CHIP PUF TEST
+  Chip A = Legitimate | Chip B = Attacker Clone
+==============================================
+
+[ENROLLMENT] Both chips generating keys in parallel...
+Please wait - 256 ROs x 2 chips measuring 1000 cycles...
+
+[RESULT] Chip A key = 40c7c9263c0b33f81a830c066d188812
+[RESULT] Chip B key = 16ec08203d05a0c001fe5aef391cd1be
+[CHECK] PASS ✅ Different chips produced DIFFERENT keys
+WARNING: file C:/Users/jayja/OneDrive/Desktop/PUF/PUF - HACKATHON/shared/puf_key_chipA.txt could not be opened
+Chip A key written to shared/puf_key_chipA.txt
+WARNING: file C:/Users/jayja/OneDrive/Desktop/PUF/PUF - HACKATHON/shared/puf_key_chipB.txt could not be opened
+Chip B key written to shared/puf_key_chipB.txt
+
+==============================================
+  TWO-CHIP TEST COMPLETE
+==============================================
+$finish called at time : 10245 ns : File "C:/Users/jayja/OneDrive/Desktop/PUF/PUF - HACKATHON/PUF - HACKATHON.srcs/sim_1/new/tb_two_chips.v" Line 143

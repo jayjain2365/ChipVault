@@ -136,8 +136,17 @@ ChipVault/
 │   ├── anti_tamper.v
 │   └── puf_pay_top.v
 │
-├── tb/
-│   └── tb_two_chips.v          # Vivado testbench — generates Chip A + B keys
+├── tb/                         # Vivado testbenches
+│   ├── tb_ring_oscillator.v
+│   ├── tb_frequency_counter.v
+│   ├── tb_ro_puf_core.v
+│   ├── tb_fuzzy_extractor.v
+│   ├── tb_anti_tamper.v
+│   ├── tb_puf_pay_top.v
+│   └── tb_two_chips.v          # generates Chip A + B keys
+│
+├── docs/
+│   └── vivado_two_chip_simulation.log   # XSim run that produced both keys
 │
 ├── app.py                      # Streamlit UI (main demo)
 ├── generate_data.py            # Synthetic LC + BL document generator
@@ -188,6 +197,26 @@ python test_all.py
 | LC-5 | REJECTED — goods description mismatch |
 | LC-8 | REJECTED — port of loading mismatch |
 | Any CLEARED doc + Chip B | BLOCKED — silicon clone attack detected |
+
+---
+
+## Hardware Verification — Keys Are Traceable to the RTL
+
+The two keys used by the live demo were not hand-written. They were produced by the Vivado XSim run of `tb/tb_two_chips.v`, which instantiates the RO-PUF twice with different silicon seeds. The full simulation transcript is committed at `docs/vivado_two_chip_simulation.log`:
+
+```
+[RESULT] Chip A key = 40c7c9263c0b33f81a830c066d188812
+[RESULT] Chip B key = 16ec08203d05a0c001fe5aef391cd1be
+[CHECK] PASS ✅ Different chips produced DIFFERENT keys
+```
+
+These match `puf_key_chipA.txt` and `puf_key_chipB.txt` byte for byte — so the signature you see in the UI traces directly back to the Verilog. Verify it yourself:
+
+```bash
+cat puf_key_chipA.txt   # 40c7c9263c0b33f81a830c066d188812
+cat puf_key_chipB.txt   # 16ec08203d05a0c001fe5aef391cd1be
+grep RESULT docs/vivado_two_chip_simulation.log
+```
 
 ---
 
