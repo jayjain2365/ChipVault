@@ -5,6 +5,9 @@ build:
     build:
       - pip install -r requirements.txt
 run:
-  command: streamlit run app.py --server.port 8080 --server.headless true --server.enableCORS false --server.enableXsrfProtection false
+  command: streamlit run app.py --server.port 8080 --server.address 0.0.0.0 --server.headless true --server.enableCORS false --server.enableXsrfProtection false
   network:
     port: 8080
+  env:
+    - name: AWS_DEFAULT_REGION
+      value: us-east-1
