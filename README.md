@@ -30,7 +30,7 @@ SWIFT MT700 Letter of Credit + Bill of Lading
                     ▼
    ┌────────────────────────────────────────┐
    │  Agent 1 — AI Document Parsing        │
-   │  AWS Bedrock / Claude Sonnet           │
+   │  On-device engine (no cloud)          │
    │  Extracts: parties, amounts, goods,    │
    │  ports, dates, one-line summary        │
    └────────────────────┬───────────────────┘
@@ -69,11 +69,11 @@ SWIFT MT700 Letter of Credit + Bill of Lading
 
 ## What Each Agent Does
 
-**Agent 1 — AI Document Parser**
-Calls Claude Sonnet on AWS Bedrock with the raw SWIFT MT700 JSON and asks it to extract every key field: applicant, beneficiary, amount, currency, goods description, port of loading, port of discharge, issue date, expiry date, and a one-line human-readable summary. The output is clean structured JSON that downstream agents and the UI can work with directly. This removes the manual data-entry step that currently takes officers 30–60 minutes per document.
+**Agent 1 — Document Parser**
+Extracts every key field from the raw SWIFT MT700 record — applicant, beneficiary, amount, currency, goods description, port of loading, port of discharge, issue date, expiry date, and a one-line human-readable summary — into clean structured JSON that downstream agents and the UI use directly. Runs fully on-device with no cloud dependency; if an LLM key (Groq/Anthropic) is configured it can enrich the output, but the demo needs none. This removes the manual data-entry step that currently takes officers 30–60 minutes per document.
 
 **Agent 2 — IFSCA Compliance Checker**
-Runs four deterministic rule checks against the parsed document and its paired Bill of Lading: expiry date before issue date, goods mismatch between LC and BL, amount above the IFSCA reporting threshold (USD 200,000), and port-of-loading mismatch. Any CRITICAL violation auto-rejects the transaction. Threshold flags escalate to human review. After rule evaluation, Agent 2 calls Bedrock again to generate a two-sentence formal compliance memo — the kind an IFSCA examiner would write — explaining the decision in plain language.
+Runs four deterministic rule checks against the parsed document and its paired Bill of Lading: expiry date before issue date, goods mismatch between LC and BL, amount above the IFSCA reporting threshold (USD 200,000), and port-of-loading mismatch. Any CRITICAL violation auto-rejects the transaction. Threshold flags escalate to human review. After rule evaluation, Agent 2 generates a two-sentence formal compliance memo — the kind an IFSCA examiner would write — explaining the decision in plain language. The memo is produced by an on-device template by default, or by a live LLM (Groq/Anthropic) when a key is configured.
 
 **Agent 3 — PUF Authentication**
 After compliance passes and (if flagged) an officer approves, Agent 3 signs the transaction using a key derived from the officer's hardware chip. The chip uses a Ring Oscillator PUF — 256 tiny oscillating circuits whose frequencies are unique to that chip's silicon — to regenerate a 128-bit key. SHA-256 expands this to a 256-bit ECDSA private key, which signs the transaction string. The bank verifies the signature against the enrolled Chip A public key. A cloned device has different silicon, produces a different key, and its signature fails — the clone is detected and blocked automatically.
@@ -100,8 +100,8 @@ In PUF-Pay, we simulate this in software using per-chip seed values that mimic m
 | Fuzzy Extractor | RTL module (`rtl/fuzzy_extractor.v`) | Corrects 1-bit noise per byte to stabilise key |
 | Key Expansion | SHA-256 | 128-bit PUF key → 256-bit ECDSA private key |
 | ECDSA Signing | Python `ecdsa` · SECP256k1 | Signs transaction string; bank verifies |
-| Agent 1 | AWS Bedrock · Claude Sonnet | AI document parsing |
-| Agent 2 | AWS Bedrock · Claude Sonnet | IFSCA compliance + AI memo |
+| Agent 1 | On-device engine (optional Groq/Anthropic LLM) | Document field extraction |
+| Agent 2 | Deterministic rules + memo (optional LLM) | IFSCA compliance + decision memo |
 | UI | Streamlit | Dark fintech dashboard, live pipeline status |
 
 ---
@@ -112,10 +112,9 @@ In PUF-Pay, we simulate this in software using per-chip seed values that mimic m
 |---|---|
 | Python | 3.10+ |
 | streamlit | 1.40+ |
-| boto3 | 1.35+ |
 | ecdsa | 0.19+ |
 | faker | 33+ |
-| AWS Bedrock model | `us.anthropic.claude-sonnet-4-6` (us-east-1) |
+| LLM (optional) | Groq `llama-3.1-8b-instant` or Anthropic `claude-3-5-sonnet` |
 
 ---
 
@@ -124,8 +123,9 @@ In PUF-Pay, we simulate this in software using per-chip seed values that mimic m
 ```
 ChipVault/
 ├── agents/
-│   ├── agent1_parser.py        # AWS Bedrock document parser
-│   ├── agent2_compliance.py    # IFSCA compliance checker + AI memo
+│   ├── local_inference.py      # On-device engine (ACTIVE) — parsing + compliance memo
+│   ├── agent1_parser.py        # Legacy cloud parser (AWS Bedrock) — kept for reference
+│   ├── agent2_compliance.py    # IFSCA rules + legacy cloud memo — kept for reference
 │   └── agent3_puf_auth.py      # PUF-based ECDSA signing & verification
 │
 ├── rtl/                        # Synthesisable Verilog (hardware PUF)
@@ -161,17 +161,18 @@ ChipVault/
 
 ## Quickstart
 
-**Prerequisites:** Python 3.10+, an AWS account with Bedrock enabled (us-east-1, Claude Sonnet model access required), AWS credentials configured.
+**Prerequisites:** Python 3.10+. No cloud account required — the app runs fully on-device.
 
 ```bash
 git clone https://github.com/jayjain2365/ChipVault.git
 cd ChipVault
 pip install -r requirements.txt
-aws configure          # enter Access Key, Secret Key, region: us-east-1
 streamlit run app.py
 ```
 
-Open **http://localhost:8501**
+Open **http://127.0.0.1:8501**
+
+**Optional — live LLM memo:** set a free `GROQ_API_KEY` (or `ANTHROPIC_API_KEY`) in your environment or in `.streamlit/secrets.toml` to have the compliance memo written by a live model. Without it, an on-device memo is used and the app works exactly the same.
 
 **To run the test suite:**
 ```bash
@@ -234,13 +235,14 @@ We believe transparency matters more than hype. Here is exactly what is simulate
 | Hardware-to-software key bridge | **Simulated** — 128-bit key written to `.txt` file by Vivado testbench; production uses a secure internal hardware bus in nanoseconds |
 | SWIFT MT700 documents | **Synthetic** — generated with Faker; not real banking documents |
 | IFSCA compliance rules | **Simplified** — 4 rule approximations; real IFSCA compliance is significantly more complex |
+| AI document / memo engine | **On-device by default** — parsing and the compliance memo run deterministically with no cloud, so the demo never depends on a network. A live LLM (Groq/Anthropic) is used only if an API key is configured |
 
 ---
 
 ## Team
 
 **Jay Jain** — Electronics & Communication Engineering (Final Year)  
-RTL/VLSI design, Verilog, Vivado, AWS Bedrock integration, Streamlit UI
+RTL/VLSI design, Verilog, Vivado, AI/LLM integration, Streamlit UI
 
 **Siddharth Pandey** — Co-developer
 

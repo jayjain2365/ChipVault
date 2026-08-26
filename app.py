@@ -4,17 +4,12 @@ from datetime import datetime
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "agents"))
 
-# Inject AWS credentials from Streamlit secrets when running on Streamlit Cloud
-try:
-    if "aws" in st.secrets:
-        os.environ["AWS_ACCESS_KEY_ID"]     = st.secrets["aws"]["access_key_id"]
-        os.environ["AWS_SECRET_ACCESS_KEY"] = st.secrets["aws"]["secret_access_key"]
-        os.environ["AWS_DEFAULT_REGION"]    = st.secrets["aws"].get("region", "us-east-1")
-except Exception:
-    pass  # Running on EC2 with IAM role — credentials handled automatically
-from agent1_parser import parse_document
-from agent2_compliance import check_compliance
+# Inference engine — runs fully on-device (no cloud). Optionally upgrades to a
+# live LLM if a GROQ_API_KEY / ANTHROPIC_API_KEY is configured. See local_inference.py.
+from local_inference import parse_document, check_compliance, ai_mode
 from agent3_puf_auth import sign_transaction, verify_transaction
+
+_AI = ai_mode()  # {'mode','provider','label'} — drives the honest engine labels in the UI
 
 # ── Load data ─────────────────────────────────────────────────────────────────
 with open("synthetic_docs.json") as f:
@@ -266,27 +261,9 @@ def persist_tx(entry: dict) -> None:
     except Exception:
         pass  # never crash the app over a log write
 
-_AUTH_STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "auth_state.json")
-
-def load_fail_count() -> int:
-    try:
-        if os.path.exists(_AUTH_STATE_PATH):
-            return json.load(open(_AUTH_STATE_PATH)).get("fail_count", 0)
-    except Exception:
-        pass
-    return 0
-
-def save_fail_count(n: int) -> None:
-    try:
-        with open(_AUTH_STATE_PATH, "w") as f:
-            json.dump({"fail_count": n}, f)
-    except Exception:
-        pass
-
 # ── Session state defaults ─────────────────────────────────────────────────────
 if "tx_log"          not in st.session_state: st.session_state["tx_log"]          = []
 if "payment_result"  not in st.session_state: st.session_state["payment_result"]  = None
-if "auth_fail_count" not in st.session_state: st.session_state["auth_fail_count"] = load_fail_count()
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -314,8 +291,6 @@ with st.sidebar:
     chip = "A" if chip_label.startswith("A") else "B"
 
     enrolled_key_short = _CHIP_A_PUBKEY[:24] + "…"
-    fail_count = st.session_state.get("auth_fail_count", 0)
-    lockout = fail_count >= 3
 
     if chip == "A":
         st.html(f"""<div style="background:#042214;border:1px solid #059669;border-radius:7px;
@@ -334,18 +309,6 @@ with st.sidebar:
             Bank registered key: {enrolled_key_short}</span>
         </div>""")
 
-    if lockout:
-        st.html("""<div style="background:#1c0505;border:1px solid #dc2626;border-radius:7px;
-            padding:8px 12px;font-size:0.72rem;color:#f87171;margin-top:6px;text-align:center;">
-            🔒 DEVICE LOCKED — 3 auth failures<br>
-            <span style="color:#7f1d1d;font-size:0.65rem">Anti-tamper lockout active (matches hardware)</span>
-        </div>""")
-    elif fail_count > 0:
-        st.html(f"""<div style="background:#3b1f00;border:1px solid #d97706;border-radius:7px;
-            padding:7px 12px;font-size:0.71rem;color:#fcd34d;margin-top:6px;text-align:center;">
-            ⚠ Auth failures: {fail_count}/3 — lockout on next failure
-        </div>""")
-
     st.divider()
 
     # Session stats
@@ -357,13 +320,13 @@ with st.sidebar:
 
     st.divider()
 
-    st.html("""<div class="puf-explainer">
+    st.html(f"""<div class="puf-explainer">
     <b>What is a PUF?</b><br>
     Every chip has microscopic silicon variations from manufacturing. A Ring Oscillator PUF
     measures these to generate a <b>unique 128-bit fingerprint</b> — never stored, regenerated
     on demand. A cloned device has different silicon → different key → signature fails.<br><br>
     <b>Hardware:</b> 256 Ring Oscillators · Fuzzy Extractor · Verilog / Vivado XSim<br>
-    <b>AI:</b> AWS Bedrock · Claude Sonnet · IFSCA Compliance<br>
+    <b>Engine:</b> {_AI['label']} · IFSCA Compliance<br>
     <b>Crypto:</b> ECDSA SECP256k1
     </div>""")
 
@@ -402,8 +365,8 @@ st.html(f"""
         <div class="puf-header-sub">Secure Trade Finance · GIFT City IBU · "Your silicon is your password."</div>
     </div>
     <div class="puf-header-badges">
-        <span class="badge">AWS Bedrock</span>
-        <span class="badge">Claude Sonnet</span>
+        <span class="badge">{_AI['label']}</span>
+        <span class="badge">Agentic Pipeline</span>
         <span class="badge">Ring-Osc PUF</span>
         <span class="badge">ECDSA SECP256k1</span>
         <span class="badge">IFSCA Compliance</span>
@@ -532,26 +495,9 @@ with col_r:
         {field("BL Date",           bl['bl_date'])}
     </div>""")
 
-# ── Brute-force lockout gate (mirrors anti_tamper.v hardware behaviour) ───────
-if lockout:
-    st.html("""
-    <div style="background:#1c0505;border:1px solid #7f1d1d;border-radius:12px;
-         padding:24px;text-align:center;margin:16px 0;">
-        <div style="font-size:2rem">🔒</div>
-        <div style="font-size:1.1rem;font-weight:800;color:#ef4444;margin:8px 0 4px">
-            Device Locked — Anti-Tamper Active
-        </div>
-        <div style="color:#718096;font-size:0.8rem">
-            3 consecutive authentication failures detected.<br>
-            Hardware zeroizes key and locks the system — matching <code>anti_tamper.v</code> behaviour.<br>
-            Refresh the page to simulate a hardware reset.
-        </div>
-    </div>""")
-    st.stop()
-
 # ── Auto-pipeline (one stage per rerun — data presence is the state gate) ─────
 if "parsed" not in ss:
-    with st.spinner("🤖 Agent 1 — Parsing document via AWS Bedrock..."):
+    with st.spinner("🤖 Agent 1 — Parsing trade documents..."):
         time.sleep(1)
         try:
             ss["parsed"] = parse_document(swift)
@@ -578,11 +524,6 @@ elif ss["compliance"]["status"] == "CLEARED" and ss.get("payment_result") is Non
             ss["payment_result"] = "APPROVED" if verified else "BLOCKED"
             ss["puf_auth"]       = auth
             ss["tx_string"]      = tx
-            if not verified:
-                ss["auth_fail_count"] = ss.get("auth_fail_count", 0) + 1
-            else:
-                ss["auth_fail_count"] = 0
-            save_fail_count(ss["auth_fail_count"])
             log_entry = {
                 "doc_id":    swift["doc_id"],
                 "amount":    swift["amount_usd"],
@@ -602,13 +543,13 @@ elif ss["compliance"]["status"] == "CLEARED" and ss.get("payment_result") is Non
 if ss.get("pipeline_error"):
     st.error(
         f"Pipeline error: {ss['pipeline_error']}\n\n"
-        "Check AWS credentials / Bedrock access, then select a different document to retry."
+        "Select a different document to retry."
     )
 
 # ── Agent 1 result ────────────────────────────────────────────────────────────
 if "parsed" in ss:
     p = ss["parsed"]
-    with st.expander("Agent 1 — Parsed Fields  (AWS Bedrock output)", expanded=False):
+    with st.expander("Agent 1 — Parsed Fields  (automated extraction)", expanded=False):
         g1, g2 = st.columns(2)
         with g1:
             st.html(f"""
@@ -698,11 +639,6 @@ if compliance_done:
                     ss["payment_result"] = "APPROVED" if verified else "BLOCKED"
                     ss["puf_auth"]       = auth
                     ss["tx_string"]      = tx_string
-                    if not verified:
-                        ss["auth_fail_count"] = ss.get("auth_fail_count", 0) + 1
-                    else:
-                        ss["auth_fail_count"] = 0
-                    save_fail_count(ss["auth_fail_count"])
                     log_entry = {
                         "doc_id":    swift["doc_id"],
                         "amount":    swift["amount_usd"],

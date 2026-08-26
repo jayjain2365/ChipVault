@@ -1,0 +1,11 @@
+# Dark fintech theme — matches the app's custom CSS so Streamlit's own widgets
+# (selectbox, radio, buttons) render dark on Streamlit Community Cloud too.
+[theme]
+base                     = "dark"
+primaryColor             = "#1d4ed8"
+backgroundColor          = "#0a0f1a"
+secondaryBackgroundColor = "#0f1825"
+textColor                = "#cbd5e0"
+
+[browser]
+gatherUsageStats = false

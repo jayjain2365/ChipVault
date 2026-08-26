@@ -16,3 +16,4 @@ auth_state.json
 transactions_log.json
 pufpay.zip
 .vscode/
+.claude/
